@@ -1,169 +1,297 @@
-# Softadastra Registry
+# softadastra/transport
 
-A universal, offline‑first, high‑performance package registry powering the entire Softadastra ecosystem — including Vix.cpp, Ivi.php, Rix, Softadastra Drive, and WorldNet applications.
+> Network transport layer for Softadastra systems.
 
-## 🚀 Vision
+The `transport` module is responsible for **moving data between peers**.
 
-The **Softadastra Registry** is the foundation of the upcoming WorldNet infrastructure.  
-It provides a **secure, global, low‑latency, distributed package registry** designed for environments with unstable connectivity such as many African regions.
+It provides a clean abstraction over network communication while remaining:
 
-Its mission is to be:
-
-- **Universal** — supports packages for Vix.cpp, Ivi.php, Rix, extensions, plugins, and future Softadastra apps.
-- **Offline‑first** — integrates naturally with Softadastra Drive for local mirroring and caching.
-- **Distributed** — ready for peer‑to‑peer sync later via WorldNet nodes.
-- **Fast & secure** — implemented using modern C++ and optimized server‑side logic.
-
-This is the core building block that allows developers to build, distribute, and install software across the entire Softadastra stack.
+* Simple
+* Reliable
+* Decoupled from business logic
 
 ---
 
-## 🏗 Architecture Overview
+## Purpose
 
-The registry backend follows a clean layered architecture:
+The goal of `softadastra/transport` is simple:
 
+> Send and receive messages between peers in a reliable and structured way.
+
+---
+
+## Core Principle
+
+> Transport moves data. It does not understand it.
+
+This module:
+
+* Does not implement sync logic
+* Does not decide what to send
+* Does not resolve conflicts
+
+👉 It only delivers messages.
+
+---
+
+## Responsibilities
+
+The `transport` module provides:
+
+* Connection management (sessions)
+* Message framing
+* Serialization / deserialization
+* Request / response handling
+* Basic reliability (retries, ordering at connection level)
+
+---
+
+## What this module does NOT do
+
+* No sync logic (sync module)
+* No durability (wal module)
+* No filesystem access (fs module)
+* No state management (metadata module)
+
+👉 It is a pure communication layer.
+
+---
+
+## Design Principles
+
+### 1. Decoupling
+
+Transport must not depend on application logic.
+
+---
+
+### 2. Reliability
+
+Messages should be:
+
+* Delivered
+* Retransmitted if needed
+* Validated
+
+---
+
+### 3. Simplicity
+
+Start with:
+
+* TCP-based transport
+* Simple message protocol
+
+---
+
+### 4. Extensibility
+
+Future transports should be possible:
+
+* QUIC
+* WebSocket
+* P2P overlays
+
+---
+
+## Module Structure
+
+```id="t7x2lp"
+modules/transport/
+├── include/softadastra/transport/
+│   ├── Transport.hpp
+│   ├── Message.hpp
+│   ├── Session.hpp
+│   ├── TcpTransport.hpp
+│   └── Protocol.hpp
+└── src/
 ```
-HTTP Layer (API, routing, middleware)
-        ↓
-Services (publish, resolve, search, auth)
-        ↓
-Domain (Package, Version, User, Token)
-        ↓
-Persistence Layer (MySQL/Postgres repositories)
-        ↓
-Storage (local filesystem → S3/Drive mirror → P2P later)
+
+---
+
+## Core Components
+
+### Transport
+
+High-level interface.
+
+Responsible for:
+
+* Managing connections
+* Sending messages
+* Receiving messages
+
+---
+
+### Session
+
+Represents a connection between two peers.
+
+Handles:
+
+* Lifecycle (connect, disconnect)
+* State tracking
+* Message exchange
+
+---
+
+### Message
+
+Represents a unit of communication.
+
+Typical fields:
+
+* Message type
+* Payload
+* Metadata (optional)
+
+---
+
+### Protocol
+
+Defines:
+
+* Message format
+* Encoding / decoding rules
+* Versioning strategy
+
+---
+
+### TcpTransport
+
+Concrete implementation using TCP.
+
+Responsibilities:
+
+* Socket management
+* Data transmission
+* Connection handling
+
+---
+
+## Example Usage
+
+```cpp id="ex5"
+#include <softadastra/transport/TcpTransport.hpp>
+
+using namespace softadastra::transport;
+
+TcpTransport transport;
+
+transport.onMessage([](const Message& msg) {
+    // Forward to sync module
+});
+
+transport.connect("192.168.1.10", 9000);
 ```
 
-### Main components
+---
 
-- **HTTP Server** — powered by Vix.cpp
-- **Authentication** — token‑based access with scopes
-- **Publish Pipeline** — receives package metadata + tarball
-- **Resolver** — resolves versions using semver rules
-- **Search Engine** — index + filters (simple at first)
-- **Storage System**
-  - v0 → Local filesystem
-  - v1 → Softadastra Drive mirror
-  - v2 → WorldNet distributed nodes
+## Message Flow
+
+### Sending
+
+1. Sync module produces message
+2. Transport serializes it
+3. Session sends it over TCP
 
 ---
 
-## 📦 API Overview (Draft)
+### Receiving
 
-### `POST /api/packages/publish`
-
-Publish a new package or version.  
-Requires authentication token.
-
-### `GET /api/packages/:name`
-
-Returns package metadata (description, versions, owner…).
-
-### `GET /api/packages/:name/:version/download`
-
-Returns the binary artifact (`.tar.gz / .zip / .whl / .vixpkg`).
-
-### `GET /api/search?q=...`
-
-Basic search on name + tags.
-
-Full API documented in `docs/api.md`.
+1. Data received from socket
+2. Transport reconstructs message
+3. Message delivered to upper layer (sync)
 
 ---
 
-## 📂 Repository Structure
+## Reliability Model
 
-```
-registry/
-├── README.md
-├── CHANGELOG.md
-├── LICENSE
-├── CMakeLists.txt
-├── config/
-├── docs/
-│   ├── architecture.md
-│   ├── api.md
-│   ├── storage.md
-│   ├── security.md
-│   └── roadmap.md
-├── migrations/
-├── scripts/
-├── infra/
-├── include/
-│   └── softadastra/registry/
-├── src/
-├── tests/
-```
+Transport ensures:
+
+* Connection-level reliability (TCP)
+* Basic retry mechanisms
+* Message integrity (protocol validation)
+
+Transport does NOT ensure:
+
+* Global ordering across peers
+* Deduplication (handled by sync)
+* Convergence (handled by sync)
 
 ---
 
-## 🔥 MVP Roadmap (v0.1)
+## Dependencies
 
-### ✅ Phase 1 — Core foundation
+### Internal
 
-- Project scaffolding
-- CMake + build system
-- Minimal HTTP server (Vix.cpp)
-- Routing structure
-- Local filesystem storage
+* softadastra/core
 
-### 🚧 Phase 2 — Package publishing
+### External
 
-- Manifest validation
-- Tarball upload
-- Integrity hash
-- DB schema for packages + versions
-
-### 🚧 Phase 3 — Package resolution
-
-- Semver resolver
-- Download endpoint
-
-### 🚧 Phase 4 — Authentication & permissions
-
-- Token generation
-- Scopes: `read`, `publish`, `admin`
-
-### 🚧 Phase 5 — CLI integration (`vixpm`)
-
-- `vixpm publish`
-- `vixpm add <package>`
-- `vixpm search`
+* OS networking APIs (sockets)
+* Optional: Asio / Boost.Asio (depending on implementation)
 
 ---
 
-## 🌍 Future: Softadastra Drive + P2P
+## Failure Model
 
-The registry is designed to integrate with:
+Designed to handle:
 
-### Softadastra Drive
-
-- Local mirroring
-- Offline installation
-- Sync acceleration in low‑bandwidth regions
-
-### Softadastra net P2P
-
-- Distributed registry nodes
-- CRDT‑based version propagation
-- High availability even without cloud connectivity
+* Connection drops
+* Partial transmissions
+* Network latency
+* Peer unavailability
 
 ---
 
-## 🤝 Contributing
+## MVP Scope
 
-The project follows a clean modular structure.  
-PRs for API improvements, code quality, or additional storage backends are welcome.
-
----
-
-## 📜 License
-
-MIT License — free to use, modify and distribute.
+* TCP transport only
+* Single connection per peer
+* Basic message protocol
+* No encryption (initially)
 
 ---
 
-## ✨ Maintained by
+## Roadmap
 
-**Softadastra Group — Global OS + WorldNet**  
-Lead developer: Gaspard Kirira (https://x.com/@g_kirira)
+* QUIC transport
+* WebSocket support
+* Peer-to-peer overlay
+* Message compression
+* Encryption (TLS / custom)
+* Multiplexing
+* Backpressure handling
+
+---
+
+## Rules
+
+* Never embed business logic
+* Never assume message order globally
+* Always validate incoming data
+* Always fail safely
+
+---
+
+## Philosophy
+
+Transport is the **wire**.
+
+> It carries data, but it does not decide anything.
+
+---
+
+## Summary
+
+* Moves messages between peers
+* Manages connections
+* Provides protocol abstraction
+* Fully decoupled from sync logic
+
+---
+
+## License
+
+See root LICENSE file.
