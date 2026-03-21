@@ -1,0 +1,47 @@
+{
+  "name": "transport",
+  "namespace": "softadastra",
+  "version": "0.1.0",
+  "type": "library",
+  "include": "include",
+  "license": "MIT",
+  "description": "Peer-to-peer transport layer for Softadastra. Handles message delivery, peer connections, sessions, routing, and protocol-level communication between nodes. Acts as the bridge between network transport and the sync engine.",
+  "keywords": [
+    "softadastra",
+    "transport",
+    "network",
+    "p2p",
+    "peer-to-peer",
+    "communication",
+    "protocol",
+    "messaging",
+    "routing",
+    "connections",
+    "sessions",
+    "distributed-systems",
+    "sync",
+    "replication",
+    "networking",
+    "reliability",
+    "offline-first",
+    "c++",
+    "cpp",
+    "c++20",
+    "systems",
+    "infrastructure",
+    "library"
+  ],
+  "repository": "https://github.com/softadastra/transport",
+  "authors": [
+    {
+      "name": "Gaspard Kirira",
+      "github": "Gaspardkirira"
+    }
+  ],
+  "deps": [
+    {
+      "id": "softadastra/sync",
+      "version": "0.2.0"
+    }
+  ]
+}
