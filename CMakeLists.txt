@@ -57,7 +57,7 @@ target_include_directories(softadastra_transport
 file(GLOB_RECURSE TRANSPORT_SOURCES
     CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/platform/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/linux/*.cpp
 )
 
 target_sources(softadastra_transport
