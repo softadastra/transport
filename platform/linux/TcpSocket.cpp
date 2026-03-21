@@ -338,4 +338,4 @@ namespace softadastra::transport::platform::os_linux
     return fd_;
   }
 
-} // namespace softadastra::transport::platform::linux
+} // namespace softadastra::transport::platform::os_linux
