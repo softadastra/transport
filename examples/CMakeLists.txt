@@ -4,6 +4,10 @@ set(TRANSPORT_EXAMPLES
     basic_server
     basic_client
     sync_bridge
+    full_sync_demo_server
+    full_sync_demo_client
+    drive_end_to_end_demo_server
+    drive_end_to_end_demo_client
 )
 
 foreach(example_name IN LISTS TRANSPORT_EXAMPLES)

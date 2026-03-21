@@ -17,7 +17,7 @@ int main()
 {
   transport::core::TransportConfig cfg;
   cfg.bind_host = "0.0.0.0";
-  cfg.bind_port = 0; // client
+  cfg.bind_port = 9002;
 
   transport::backend::TcpTransportBackend backend(cfg);
 
