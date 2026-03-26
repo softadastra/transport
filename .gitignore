@@ -1,114 +1,23 @@
-# ---------------------------------------------------------
-# Core C/C++ build artifacts
-# ---------------------------------------------------------
-
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
+/build*/
+out/
+.vscode/
+.idea/
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-*.dwo
-
-# Compiled Dynamic libraries
+*.a
+*.lib
 *.so
 *.dylib
 *.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
 *.exe
-*.out
-*.app
-
-# ---------------------------------------------------------
-# Build directories
-# ---------------------------------------------------------
-build/
-build-*/
-cmake-build-*/
-
-# CMake cache & files
-CMakeCache.txt
-CMakeFiles/
-CMakeScripts/
-Testing/
-Makefile
-cmake_install.cmake
-install_manifest.txt
 compile_commands.json
-
-# Ninja files
-*.ninja
-.ninja_log
-.ninja_deps
-
-# ---------------------------------------------------------
-# Logs & temp
-# ---------------------------------------------------------
-*.log
-logs/
-*.tmp
-*.temp
-
-# ---------------------------------------------------------
-# Package artifacts (Registry)
-# ---------------------------------------------------------
-data/
-artifacts/
-packages/
-
-# ---------------------------------------------------------
-# Environment & secrets
-# ---------------------------------------------------------
-.env
-*.local
-*.env.*
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
 cmd.md
-future.md
+.vix/
 
-# ---------------------------------------------------------
-# IDE / Editor config
-# ---------------------------------------------------------
 
-# VSCode
-.vscode/
-*.code-workspace
 
-# CLion / JetBrains
-.idea/
 
-# Sublime
-*.sublime-project
-*.sublime-workspace
 
-# Vim
-*.swp
-*.swo
-
-# ---------------------------------------------------------
-# System files
-# ---------------------------------------------------------
-.DS_Store
-Thumbs.db
