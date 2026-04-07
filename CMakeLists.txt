@@ -11,8 +11,8 @@ include(GNUInstallDirs)
 # ========================
 # Options
 # ========================
-option(SOFTADASTRA_TRANSPORT_BUILD_TESTS "Build transport tests" ON)
-option(SOFTADASTRA_TRANSPORT_BUILD_EXAMPLES "Build transport examples" ON)
+option(SOFTADASTRA_TRANSPORT_BUILD_TESTS "Build transport tests" OFF)
+option(SOFTADASTRA_TRANSPORT_BUILD_EXAMPLES "Build transport examples" OFF)
 
 # ========================
 # Global settings
@@ -24,8 +24,10 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # ========================
 # Dependencies
 # ========================
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.vix/vix_deps.cmake")
-    include("${CMAKE_CURRENT_SOURCE_DIR}/.vix/vix_deps.cmake")
+if(NOT SOFTADASTRA_UMBRELLA_BUILD)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.vix/vix_deps.cmake")
+        include("${CMAKE_CURRENT_SOURCE_DIR}/.vix/vix_deps.cmake")
+    endif()
 endif()
 
 if(NOT TARGET softadastra::sync AND NOT TARGET softadastra_sync)
@@ -148,8 +150,12 @@ set_target_properties(softadastra_transport PROPERTIES
 # ========================
 # Examples
 # ========================
-if(SOFTADASTRA_TRANSPORT_BUILD_EXAMPLES)
-    add_subdirectory(examples)
+if(SOFTADASTRA_TRANSPORT_BUILD_EXAMPLES AND NOT SOFTADASTRA_UMBRELLA_BUILD)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
+        add_subdirectory(examples)
+    else()
+        message(STATUS "[transport] examples/ missing CMakeLists.txt -> skipping")
+    endif()
 endif()
 
 # ========================
@@ -157,7 +163,11 @@ endif()
 # ========================
 if(SOFTADASTRA_TRANSPORT_BUILD_TESTS)
     include(CTest)
-    add_subdirectory(tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+        add_subdirectory(tests)
+    else()
+        message(STATUS "[transport] tests/ missing CMakeLists.txt -> skipping")
+    endif()
 endif()
 
 # ========================
