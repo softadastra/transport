@@ -1,25 +1,30 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(softadastra_transport
-    VERSION 0.1.0
-    DESCRIPTION "Softadastra Transport - Peer-to-peer transport layer"
-    LANGUAGES CXX
-)
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    project(softadastra_transport
+        VERSION 0.1.0
+        DESCRIPTION "Softadastra Transport - Peer-to-peer transport layer"
+        LANGUAGES CXX
+    )
+endif()
 
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 # ========================
-# Options
+# Standalone fallback options
 # ========================
-option(SOFTADASTRA_TRANSPORT_BUILD_TESTS "Build transport tests" OFF)
+if(NOT DEFINED SOFTADASTRA_WARNINGS_AS_ERRORS)
+    option(SOFTADASTRA_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
+endif()
+
+if(SOFTADASTRA_UMBRELLA_BUILD)
+    set(SOFTADASTRA_TRANSPORT_BUILD_TESTS ${SOFTADASTRA_BUILD_TESTS})
+else()
+    option(SOFTADASTRA_TRANSPORT_BUILD_TESTS "Build transport tests" OFF)
+endif()
+
 option(SOFTADASTRA_TRANSPORT_BUILD_EXAMPLES "Build transport examples" OFF)
-
-# ========================
-# Global settings
-# ========================
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ========================
 # Dependencies
@@ -122,8 +127,14 @@ target_include_directories(softadastra_transport
 # ========================
 if(MSVC)
     target_compile_options(softadastra_transport PRIVATE /W4 /permissive-)
+    if(SOFTADASTRA_WARNINGS_AS_ERRORS)
+        target_compile_options(softadastra_transport PRIVATE /WX)
+    endif()
 else()
     target_compile_options(softadastra_transport PRIVATE -Wall -Wextra -Wpedantic)
+    if(SOFTADASTRA_WARNINGS_AS_ERRORS)
+        target_compile_options(softadastra_transport PRIVATE -Werror)
+    endif()
 endif()
 
 # ========================
@@ -142,9 +153,52 @@ endif()
 # ========================
 set_target_properties(softadastra_transport PROPERTIES
     OUTPUT_NAME softadastra_transport
-    VERSION ${PROJECT_VERSION}
+    VERSION 0.1.0
     SOVERSION 0
     EXPORT_NAME transport
+)
+
+# ========================
+# Install
+# ========================
+install(
+    TARGETS softadastra_transport
+    EXPORT softadastraTransportTargets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(
+    DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(
+    EXPORT softadastraTransportTargets
+    FILE softadastraTransportTargets.cmake
+    NAMESPACE softadastra::
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/softadastra_transport"
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/softadastra_transportConfigVersion.cmake"
+    VERSION 0.1.0
+    COMPATIBILITY SameMajorVersion
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/softadastra_transportConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/softadastra_transportConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/softadastra_transport"
+)
+
+install(
+    FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/softadastra_transportConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/softadastra_transportConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/softadastra_transport"
 )
 
 # ========================
@@ -174,10 +228,12 @@ endif()
 # Summary
 # ========================
 message(STATUS "------------------------------------------------------")
-message(STATUS "softadastra::transport configured (${PROJECT_VERSION})")
+message(STATUS "softadastra::transport configured (0.1.0)")
 message(STATUS "Sync target:     ${SOFTADASTRA_TRANSPORT_SYNC_TARGET}")
 message(STATUS "Include dir:     ${CMAKE_CURRENT_SOURCE_DIR}/include")
 message(STATUS "Build tests:     ${SOFTADASTRA_TRANSPORT_BUILD_TESTS}")
 message(STATUS "Build examples:  ${SOFTADASTRA_TRANSPORT_BUILD_EXAMPLES}")
+message(STATUS "Warnings=error:  ${SOFTADASTRA_WARNINGS_AS_ERRORS}")
 message(STATUS "Build type:      ${CMAKE_BUILD_TYPE}")
+message(STATUS "Install prefix:  ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "------------------------------------------------------")
