@@ -5,7 +5,6 @@
 #ifndef SOFTADASTRA_TRANSPORT_TCP_TRANSPORT_BACKEND_HPP
 #define SOFTADASTRA_TRANSPORT_TCP_TRANSPORT_BACKEND_HPP
 
-#include <cstring>
 #include <optional>
 #include <string>
 #include <vector>
@@ -231,41 +230,47 @@ namespace softadastra::transport::backend
 
     std::optional<core::TransportEnvelope> try_read_one(Client &client)
     {
-      std::uint32_t payload_size = 0;
-      const std::size_t header_read =
-          client.socket.recv_all(&payload_size, sizeof(payload_size));
-
-      if (header_read == 0)
+      if (!client.socket.valid())
       {
         return std::nullopt;
       }
+
+      std::uint32_t payload_size = 0;
+
+      const std::size_t header_read = client.socket.recv_all(
+          &payload_size,
+          sizeof(payload_size));
 
       if (header_read != sizeof(payload_size))
       {
         return std::nullopt;
       }
 
-      if (payload_size == 0 || payload_size > config_.max_frame_size)
+      if (payload_size == 0)
+      {
+        return std::nullopt;
+      }
+
+      if (payload_size > config_.max_frame_size)
       {
         return std::nullopt;
       }
 
       std::vector<std::uint8_t> payload(payload_size);
-      const std::size_t payload_read =
-          client.socket.recv_all(payload.data(), payload.size());
+
+      const std::size_t payload_read = client.socket.recv_all(
+          payload.data(),
+          payload.size());
 
       if (payload_read != payload.size())
       {
         return std::nullopt;
       }
 
-      std::vector<std::uint8_t> framed(sizeof(std::uint32_t) + payload.size());
-      std::size_t offset = 0;
-      std::memcpy(framed.data() + offset, &payload_size, sizeof(payload_size));
-      offset += sizeof(payload_size);
-      std::memcpy(framed.data() + offset, payload.data(), payload.size());
+      const auto message = encoding::MessageDecoder::decode_message(
+          payload.data(),
+          payload.size());
 
-      const auto message = encoding::MessageDecoder::decode_framed_message(framed);
       if (!message.has_value())
       {
         return std::nullopt;
