@@ -66,23 +66,13 @@ file(GLOB_RECURSE SOFTADASTRA_TRANSPORT_SOURCES
 
 set(SOFTADASTRA_TRANSPORT_PLATFORM_SOURCES)
 
-if(UNIX AND NOT APPLE)
-    file(GLOB_RECURSE SOFTADASTRA_TRANSPORT_LINUX_SOURCES
+if(UNIX)
+    file(GLOB_RECURSE SOFTADASTRA_TRANSPORT_POSIX_SOURCES
         CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/linux/*.cpp"
     )
     list(APPEND SOFTADASTRA_TRANSPORT_PLATFORM_SOURCES
-        ${SOFTADASTRA_TRANSPORT_LINUX_SOURCES}
-    )
-endif()
-
-if(APPLE)
-    file(GLOB_RECURSE SOFTADASTRA_TRANSPORT_MAC_SOURCES
-        CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/platform/mac/*.cpp"
-    )
-    list(APPEND SOFTADASTRA_TRANSPORT_PLATFORM_SOURCES
-        ${SOFTADASTRA_TRANSPORT_MAC_SOURCES}
+        ${SOFTADASTRA_TRANSPORT_POSIX_SOURCES}
     )
 endif()
 
@@ -140,6 +130,10 @@ endif()
 # ========================
 # Platform definitions
 # ========================
+if(UNIX)
+    target_compile_definitions(softadastra_transport PRIVATE SOFTADASTRA_TRANSPORT_POSIX)
+endif()
+
 if(UNIX AND NOT APPLE)
     target_compile_definitions(softadastra_transport PRIVATE SOFTADASTRA_TRANSPORT_LINUX)
 elseif(APPLE)
