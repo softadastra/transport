@@ -1,15 +1,26 @@
-/*
- * MessageEncoder.hpp
+/**
+ *
+ *  @file MessageEncoder.hpp
+ *  @author Gaspard Kirira
+ *
+ *  Copyright 2026, Softadastra.
+ *  All rights reserved.
+ *  https://github.com/softadastra/softadastra
+ *
+ *  Licensed under the Apache License, Version 2.0.
+ *
+ *  Softadastra Transport
+ *
  */
 
 #ifndef SOFTADASTRA_TRANSPORT_MESSAGE_ENCODER_HPP
 #define SOFTADASTRA_TRANSPORT_MESSAGE_ENCODER_HPP
 
 #include <cstdint>
-#include <cstring>
 #include <string>
 #include <vector>
 
+#include <softadastra/store/utils/Serializer.hpp>
 #include <softadastra/transport/core/TransportMessage.hpp>
 #include <softadastra/transport/utils/Frame.hpp>
 
@@ -17,131 +28,182 @@ namespace softadastra::transport::encoding
 {
   namespace core = softadastra::transport::core;
   namespace utils = softadastra::transport::utils;
+  namespace store_utils = softadastra::store::utils;
 
+  /**
+   * @brief Encodes transport messages into binary payloads.
+   *
+   * MessageEncoder converts a TransportMessage into a deterministic binary
+   * representation.
+   *
+   * Message payload format:
+   *
+   * @code
+   * uint8  message_type
+   * uint32 from_size
+   * bytes  from_node_id
+   * uint32 to_size
+   * bytes  to_node_id
+   * uint32 correlation_size
+   * bytes  correlation_id
+   * uint32 payload_size
+   * bytes  payload
+   * @endcode
+   *
+   * Full frame format:
+   *
+   * @code
+   * uint32 encoded_message_size
+   * bytes  encoded_message
+   * @endcode
+   *
+   * Integers are encoded using the Store serializer helpers to keep persisted
+   * and transported formats deterministic.
+   */
   class MessageEncoder
   {
   public:
     /**
-     * @brief Encode a transport message payload (without outer frame size)
+     * @brief Encodes a transport message without the outer frame size.
      *
-     * Payload format:
-     *   [uint8_t  type]
-     *   [uint32_t from_size][from bytes]
-     *   [uint32_t to_size][to bytes]
-     *   [uint32_t correlation_size][correlation bytes]
-     *   [uint32_t payload_size][payload bytes]
+     * Invalid messages return an empty buffer.
+     *
+     * @param message Transport message.
+     * @return Encoded message bytes.
      */
-    static std::vector<std::uint8_t> encode_message(const core::TransportMessage &message)
+    [[nodiscard]] static std::vector<std::uint8_t>
+    encode_message(const core::TransportMessage &message)
     {
-      const std::uint32_t from_size =
-          static_cast<std::uint32_t>(message.from_node_id.size());
+      if (!message.is_valid())
+      {
+        return {};
+      }
 
-      const std::uint32_t to_size =
-          static_cast<std::uint32_t>(message.to_node_id.size());
+      std::vector<std::uint8_t> buffer;
 
-      const std::uint32_t correlation_size =
-          static_cast<std::uint32_t>(message.correlation_id.size());
-
-      const std::uint32_t payload_size =
-          static_cast<std::uint32_t>(message.payload.size());
-
-      const std::size_t total_size =
+      buffer.reserve(
           sizeof(std::uint8_t) +
-          sizeof(std::uint32_t) + from_size +
-          sizeof(std::uint32_t) + to_size +
-          sizeof(std::uint32_t) + correlation_size +
-          sizeof(std::uint32_t) + payload_size;
+          sizeof(std::uint32_t) + message.from_node_id.size() +
+          sizeof(std::uint32_t) + message.to_node_id.size() +
+          sizeof(std::uint32_t) + message.correlation_id.size() +
+          sizeof(std::uint32_t) + message.payload.size());
 
-      std::vector<std::uint8_t> buffer(total_size);
+      buffer.push_back(static_cast<std::uint8_t>(message.type));
 
-      std::size_t offset = 0;
-
-      write(buffer, offset, static_cast<std::uint8_t>(message.type));
-      write_string(buffer, offset, message.from_node_id);
-      write_string(buffer, offset, message.to_node_id);
-      write_string(buffer, offset, message.correlation_id);
-      write_bytes(buffer, offset, message.payload);
+      append_string(buffer, message.from_node_id);
+      append_string(buffer, message.to_node_id);
+      append_string(buffer, message.correlation_id);
+      append_bytes(buffer, message.payload);
 
       return buffer;
     }
 
     /**
-     * @brief Encode a full framed message
+     * @brief Encodes a full length-prefixed frame.
      *
      * Final wire format:
-     *   [uint32_t payload_size][encoded message bytes...]
+     *
+     * @code
+     * uint32 encoded_message_size
+     * bytes  encoded_message
+     * @endcode
+     *
+     * Invalid messages return an empty buffer.
+     *
+     * @param message Transport message.
+     * @return Encoded frame bytes.
      */
-    static std::vector<std::uint8_t> encode_frame(const core::TransportMessage &message)
+    [[nodiscard]] static std::vector<std::uint8_t>
+    encode_frame(const core::TransportMessage &message)
     {
-      const std::vector<std::uint8_t> encoded_message = encode_message(message);
-      const std::uint32_t payload_size =
-          static_cast<std::uint32_t>(encoded_message.size());
+      const auto encoded_message = encode_message(message);
 
-      std::vector<std::uint8_t> frame(sizeof(std::uint32_t) + encoded_message.size());
-
-      std::size_t offset = 0;
-      write(frame, offset, payload_size);
-
-      if (!encoded_message.empty())
+      if (encoded_message.empty())
       {
-        std::memcpy(frame.data() + offset,
-                    encoded_message.data(),
-                    encoded_message.size());
+        return {};
       }
+
+      std::vector<std::uint8_t> frame;
+
+      frame.reserve(
+          sizeof(std::uint32_t) +
+          encoded_message.size());
+
+      store_utils::Serializer::append_u32(
+          frame,
+          static_cast<std::uint32_t>(encoded_message.size()));
+
+      frame.insert(
+          frame.end(),
+          encoded_message.begin(),
+          encoded_message.end());
 
       return frame;
     }
 
     /**
-     * @brief Wrap a message into a Frame structure
+     * @brief Wraps a message into a Frame structure.
+     *
+     * Invalid messages return an empty invalid frame.
+     *
+     * @param message Transport message.
+     * @return Frame object.
      */
-    static utils::Frame make_frame(const core::TransportMessage &message)
+    [[nodiscard]] static utils::Frame
+    make_frame(const core::TransportMessage &message)
     {
-      utils::Frame frame;
-      frame.payload = encode_message(message);
-      frame.payload_size = static_cast<std::uint32_t>(frame.payload.size());
-      return frame;
+      auto payload = encode_message(message);
+
+      if (payload.empty())
+      {
+        return utils::Frame{};
+      }
+
+      return utils::Frame{std::move(payload)};
     }
 
   private:
-    template <typename T>
-    static void write(std::vector<std::uint8_t> &buffer,
-                      std::size_t &offset,
-                      T value)
+    /**
+     * @brief Appends a size-prefixed string.
+     *
+     * @param buffer Output buffer.
+     * @param value String value.
+     */
+    static void append_string(
+        std::vector<std::uint8_t> &buffer,
+        const std::string &value)
     {
-      std::memcpy(buffer.data() + offset, &value, sizeof(T));
-      offset += sizeof(T);
+      store_utils::Serializer::append_u32(
+          buffer,
+          static_cast<std::uint32_t>(value.size()));
+
+      buffer.insert(
+          buffer.end(),
+          value.begin(),
+          value.end());
     }
 
-    static void write_string(std::vector<std::uint8_t> &buffer,
-                             std::size_t &offset,
-                             const std::string &value)
+    /**
+     * @brief Appends size-prefixed bytes.
+     *
+     * @param buffer Output buffer.
+     * @param value Byte payload.
+     */
+    static void append_bytes(
+        std::vector<std::uint8_t> &buffer,
+        const std::vector<std::uint8_t> &value)
     {
-      const std::uint32_t size = static_cast<std::uint32_t>(value.size());
-      write(buffer, offset, size);
+      store_utils::Serializer::append_u32(
+          buffer,
+          static_cast<std::uint32_t>(value.size()));
 
-      if (size > 0)
-      {
-        std::memcpy(buffer.data() + offset, value.data(), size);
-        offset += size;
-      }
-    }
-
-    static void write_bytes(std::vector<std::uint8_t> &buffer,
-                            std::size_t &offset,
-                            const std::vector<std::uint8_t> &value)
-    {
-      const std::uint32_t size = static_cast<std::uint32_t>(value.size());
-      write(buffer, offset, size);
-
-      if (size > 0)
-      {
-        std::memcpy(buffer.data() + offset, value.data(), size);
-        offset += size;
-      }
+      buffer.insert(
+          buffer.end(),
+          value.begin(),
+          value.end());
     }
   };
 
 } // namespace softadastra::transport::encoding
 
-#endif
+#endif // SOFTADASTRA_TRANSPORT_MESSAGE_ENCODER_HPP

@@ -1,5 +1,16 @@
-/*
- * TcpSocket.hpp
+/**
+ *
+ *  @file TcpSocket.hpp
+ *  @author Gaspard Kirira
+ *
+ *  Copyright 2026, Softadastra.
+ *  All rights reserved.
+ *  https://github.com/softadastra/softadastra
+ *
+ *  Licensed under the Apache License, Version 2.0.
+ *
+ *  Softadastra Transport
+ *
  */
 
 #ifndef SOFTADASTRA_TRANSPORT_TCP_SOCKET_HPP
@@ -9,13 +20,18 @@
 #include <cstdint>
 #include <string>
 
+#include <softadastra/core/Core.hpp>
+
 namespace softadastra::transport::platform::os_linux
 {
+  namespace core_time = softadastra::core::time;
+
   /**
-   * @brief Minimal Linux TCP socket wrapper
+   * @brief Minimal Linux TCP socket wrapper.
    *
-   * This class provides a small RAII wrapper around a blocking
-   * IPv4 TCP socket for the transport module.
+   * TcpSocket is a small RAII wrapper around a blocking IPv4 TCP socket.
+   *
+   * It is used by the transport module to implement the Linux TCP backend.
    *
    * Current scope:
    * - open / close
@@ -23,118 +39,223 @@ namespace softadastra::transport::platform::os_linux
    * - connect
    * - send / receive
    * - basic socket options
+   *
+   * The socket owns its file descriptor and closes it in the destructor.
    */
   class TcpSocket
   {
   public:
     /**
-     * @brief Create an invalid socket
+     * @brief Creates an invalid socket.
      */
     TcpSocket() noexcept;
 
     /**
-     * @brief Adopt an existing socket file descriptor
+     * @brief Adopts an existing socket file descriptor.
+     *
+     * @param fd Existing socket file descriptor.
      */
     explicit TcpSocket(int fd) noexcept;
 
     /**
-     * @brief Destructor closes the socket if still open
+     * @brief Closes the socket if it is still open.
      */
     ~TcpSocket();
 
     TcpSocket(const TcpSocket &) = delete;
     TcpSocket &operator=(const TcpSocket &) = delete;
 
+    /**
+     * @brief Move-constructs a socket.
+     *
+     * Ownership of the file descriptor is transferred.
+     *
+     * @param other Source socket.
+     */
     TcpSocket(TcpSocket &&other) noexcept;
+
+    /**
+     * @brief Move-assigns a socket.
+     *
+     * Any currently owned descriptor is closed before taking ownership.
+     *
+     * @param other Source socket.
+     * @return This socket.
+     */
     TcpSocket &operator=(TcpSocket &&other) noexcept;
 
     /**
-     * @brief Open a new IPv4 TCP socket
+     * @brief Opens a new IPv4 TCP socket.
+     *
+     * @return true on success.
      */
-    bool open();
+    [[nodiscard]] bool open();
 
     /**
-     * @brief Bind the socket to host:port
+     * @brief Binds the socket to host and port.
+     *
+     * @param host Local bind host.
+     * @param port Local bind port.
+     * @return true on success.
      */
-    bool bind(const std::string &host, std::uint16_t port);
+    [[nodiscard]] bool bind(
+        const std::string &host,
+        std::uint16_t port);
 
     /**
-     * @brief Put the socket into listening mode
+     * @brief Puts the socket into listening mode.
+     *
+     * @param backlog Listen backlog.
+     * @return true on success.
      */
-    bool listen(int backlog = 16);
+    [[nodiscard]] bool listen(int backlog = 16);
 
     /**
-     * @brief Accept one incoming connection
+     * @brief Accepts one incoming connection.
      *
      * Returns an invalid TcpSocket on failure.
-     */
-    TcpSocket accept();
-
-    /**
-     * @brief Connect to a remote host:port
-     */
-    bool connect(const std::string &host, std::uint16_t port);
-
-    /**
-     * @brief Send exactly up to size bytes
      *
-     * Returns the number of bytes successfully sent.
+     * @return Accepted socket.
      */
-    std::size_t send_all(const void *data, std::size_t size);
+    [[nodiscard]] TcpSocket accept();
 
     /**
-     * @brief Read exactly up to size bytes
+     * @brief Connects to a remote host and port.
      *
-     * Returns the number of bytes successfully read.
+     * @param host Remote host.
+     * @param port Remote port.
+     * @return true on success.
      */
-    std::size_t recv_all(void *data, std::size_t size);
+    [[nodiscard]] bool connect(
+        const std::string &host,
+        std::uint16_t port);
 
     /**
-     * @brief Read some bytes once
+     * @brief Sends bytes until size bytes are sent or an error occurs.
+     *
+     * @param data Source buffer.
+     * @param size Number of bytes to send.
+     * @return Number of bytes successfully sent.
+     */
+    [[nodiscard]] std::size_t send_all(
+        const void *data,
+        std::size_t size);
+
+    /**
+     * @brief Reads bytes until size bytes are read or an error occurs.
+     *
+     * @param data Destination buffer.
+     * @param size Number of bytes to read.
+     * @return Number of bytes successfully read.
+     */
+    [[nodiscard]] std::size_t recv_all(
+        void *data,
+        std::size_t size);
+
+    /**
+     * @brief Reads some bytes once.
      *
      * Returns 0 on EOF or failure.
+     *
+     * @param data Destination buffer.
+     * @param size Maximum number of bytes to read.
+     * @return Number of bytes read.
      */
-    std::size_t recv_some(void *data, std::size_t size);
+    [[nodiscard]] std::size_t recv_some(
+        void *data,
+        std::size_t size);
 
     /**
-     * @brief Close the socket
+     * @brief Closes the socket.
      */
     void close() noexcept;
 
     /**
-     * @brief Enable or disable SO_REUSEADDR
+     * @brief Enables or disables SO_REUSEADDR.
+     *
+     * @param enabled Whether the option should be enabled.
+     * @return true on success.
      */
-    bool set_reuse_addr(bool enabled);
+    [[nodiscard]] bool set_reuse_addr(bool enabled);
 
     /**
-     * @brief Enable or disable SO_KEEPALIVE
+     * @brief Enables or disables SO_KEEPALIVE.
+     *
+     * @param enabled Whether the option should be enabled.
+     * @return true on success.
      */
-    bool set_keepalive(bool enabled);
+    [[nodiscard]] bool set_keepalive(bool enabled);
 
     /**
-     * @brief Set receive timeout in milliseconds
+     * @brief Sets receive timeout.
+     *
+     * @param timeout Timeout duration.
+     * @return true on success.
      */
-    bool set_recv_timeout_ms(std::uint64_t timeout_ms);
+    [[nodiscard]] bool set_recv_timeout(core_time::Duration timeout);
 
     /**
-     * @brief Set send timeout in milliseconds
+     * @brief Sets send timeout.
+     *
+     * @param timeout Timeout duration.
+     * @return true on success.
      */
-    bool set_send_timeout_ms(std::uint64_t timeout_ms);
+    [[nodiscard]] bool set_send_timeout(core_time::Duration timeout);
 
     /**
-     * @brief Return whether the socket is valid
+     * @brief Sets receive timeout in milliseconds.
+     *
+     * @param timeout_ms Timeout in milliseconds.
+     * @return true on success.
      */
-    bool valid() const noexcept;
+    [[nodiscard]] bool set_recv_timeout_ms(std::uint64_t timeout_ms)
+    {
+      return set_recv_timeout(
+          core_time::Duration::from_millis(
+              static_cast<core_time::Duration::rep>(timeout_ms)));
+    }
 
     /**
-     * @brief Return the raw file descriptor
+     * @brief Sets send timeout in milliseconds.
+     *
+     * @param timeout_ms Timeout in milliseconds.
+     * @return true on success.
      */
-    int fd() const noexcept;
+    [[nodiscard]] bool set_send_timeout_ms(std::uint64_t timeout_ms)
+    {
+      return set_send_timeout(
+          core_time::Duration::from_millis(
+              static_cast<core_time::Duration::rep>(timeout_ms)));
+    }
+
+    /**
+     * @brief Returns whether the socket owns a valid file descriptor.
+     *
+     * @return true when valid.
+     */
+    [[nodiscard]] bool is_valid() const noexcept;
+
+    /**
+     * @brief Backward-compatible valid alias.
+     *
+     * @return true when valid.
+     */
+    [[nodiscard]] bool valid() const noexcept
+    {
+      return is_valid();
+    }
+
+    /**
+     * @brief Returns the raw file descriptor.
+     *
+     * @return File descriptor, or -1 if invalid.
+     */
+    [[nodiscard]] int fd() const noexcept;
 
   private:
-    int fd_;
+    int fd_{-1};
   };
 
-} // namespace softadastra::transport::platform::linux
+} // namespace softadastra::transport::platform::os_linux
 
-#endif
+#endif // SOFTADASTRA_TRANSPORT_TCP_SOCKET_HPP

@@ -1,18 +1,27 @@
-/*
- * TransportEngine.hpp
+/**
+ *
+ *  @file TransportEngine.hpp
+ *  @author Gaspard Kirira
+ *
+ *  Copyright 2026, Softadastra.
+ *  All rights reserved.
+ *  https://github.com/softadastra/softadastra
+ *
+ *  Licensed under the Apache License, Version 2.0.
+ *
+ *  Softadastra Transport
+ *
  */
 
 #ifndef SOFTADASTRA_TRANSPORT_ENGINE_HPP
 #define SOFTADASTRA_TRANSPORT_ENGINE_HPP
 
-#include <cstdint>
-#include <ctime>
-#include <stdexcept>
+#include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include <softadastra/store/core/Operation.hpp>
-#include <softadastra/store/encoding/OperationEncoder.hpp>
+#include <softadastra/core/Core.hpp>
 #include <softadastra/sync/core/SyncEnvelope.hpp>
 #include <softadastra/sync/core/SyncOperation.hpp>
 #include <softadastra/transport/backend/ITransportBackend.hpp>
@@ -32,8 +41,8 @@
 
 namespace softadastra::transport::engine
 {
-  namespace store_encoding = softadastra::store::encoding;
   namespace sync_core = softadastra::sync::core;
+
   namespace transport_backend = softadastra::transport::backend;
   namespace transport_client = softadastra::transport::client;
   namespace transport_core = softadastra::transport::core;
@@ -42,40 +51,80 @@ namespace softadastra::transport::engine
   namespace transport_server = softadastra::transport::server;
   namespace transport_types = softadastra::transport::types;
 
+  namespace core_time = softadastra::core::time;
+
   /**
-   * @brief Orchestrates transport send/receive operations
+   * @brief Orchestrates transport send and receive operations.
    *
-   * Responsibilities:
-   * - own the transport backend wrappers
-   * - manage peer registry state
-   * - encode outbound sync envelopes into transport messages
-   * - poll inbound envelopes and dispatch them to sync
+   * TransportEngine is the high-level transport facade.
+   *
+   * It coordinates:
+   * - backend lifecycle
+   * - client send operations
+   * - server polling
+   * - peer registry updates
+   * - sync envelope transport encoding
+   * - inbound message dispatching
+   *
+   * It does not own sync business logic.
+   * Sync operations are handled by SyncEngine through MessageDispatcher.
    */
-  class TransportEngine
+  class TransportEngine : public softadastra::core::types::NonCopyable
   {
   public:
-    explicit TransportEngine(const transport_core::TransportContext &context,
-                             transport_backend::ITransportBackend &backend)
+    /**
+     * @brief Creates a transport engine.
+     *
+     * The context and backend are not owned by this engine.
+     *
+     * @param context Transport context.
+     * @param backend Transport backend.
+     */
+    TransportEngine(
+        const transport_core::TransportContext &context,
+        transport_backend::ITransportBackend &backend) noexcept
         : context_(context),
           backend_(backend),
           client_(backend),
           server_(backend),
           dispatcher_(context)
     {
-      if (!context_.valid())
-      {
-        throw std::runtime_error("TransportEngine: invalid TransportContext");
-      }
     }
 
     /**
-     * @brief Start the transport engine
+     * @brief Stops the transport engine on destruction.
+     */
+    ~TransportEngine()
+    {
+      stop();
+    }
+
+    /**
+     * @brief Move constructor.
+     */
+    TransportEngine(TransportEngine &&) noexcept = default;
+
+    /**
+     * @brief Move assignment.
+     */
+    TransportEngine &operator=(TransportEngine &&) noexcept = default;
+
+    /**
+     * @brief Starts the transport engine.
+     *
+     * @return true on success.
      */
     bool start()
     {
-      if (status_ == transport_types::TransportStatus::Running)
+      if (transport_types::is_running(status_))
       {
         return true;
+      }
+
+      if (!context_.is_valid())
+      {
+        status_ = transport_types::TransportStatus::Failed;
+        return false;
       }
 
       status_ = transport_types::TransportStatus::Starting;
@@ -91,99 +140,139 @@ namespace softadastra::transport::engine
     }
 
     /**
-     * @brief Stop the transport engine
+     * @brief Stops the transport engine.
      */
     void stop()
     {
+      if (status_ == transport_types::TransportStatus::Stopped)
+      {
+        return;
+      }
+
       status_ = transport_types::TransportStatus::Stopping;
+
       server_.stop();
       registry_.clear();
+
       status_ = transport_types::TransportStatus::Stopped;
     }
 
     /**
-     * @brief Return current engine status
+     * @brief Returns current engine status.
+     *
+     * @return Transport status.
      */
-    transport_types::TransportStatus status() const noexcept
+    [[nodiscard]] transport_types::TransportStatus status() const noexcept
     {
       return status_;
     }
 
     /**
-     * @brief Return true if the engine is running
+     * @brief Returns true if the engine is running.
+     *
+     * @return true when status and backend are running.
      */
-    bool running() const noexcept
+    [[nodiscard]] bool is_running() const noexcept
     {
-      return status_ == transport_types::TransportStatus::Running &&
-             backend_.running();
+      return transport_types::is_running(status_) &&
+             backend_.is_running();
     }
 
     /**
-     * @brief Register and connect a peer
+     * @brief Backward-compatible running alias.
+     *
+     * @return true when running.
+     */
+    [[nodiscard]] bool running() const noexcept
+    {
+      return is_running();
+    }
+
+    /**
+     * @brief Registers and connects a peer.
+     *
+     * @param peer Peer to connect.
+     * @return true on success.
      */
     bool connect_peer(const transport_core::PeerInfo &peer)
     {
-      if (!running() || !peer.valid())
+      if (!is_running() || !peer.is_valid())
       {
         return false;
       }
+
+      transport_peer::PeerSession session{peer};
+      session.mark_connecting();
+      registry_.upsert(session);
 
       if (!client_.connect(peer))
       {
+        registry_.mark_faulted(peer.node_id);
         return false;
       }
 
-      transport_peer::PeerSession session;
-      session.peer = peer;
-      session.state = transport_types::PeerState::Connected;
-      session.last_seen_at = now_ms();
-      session.error_count = 0;
+      registry_.mark_connected(peer.node_id);
 
-      registry_.upsert(std::move(session));
       return true;
     }
 
     /**
-     * @brief Disconnect and unregister a peer
+     * @brief Disconnects and unregisters a peer.
+     *
+     * @param peer Peer to disconnect.
+     * @return true if disconnected.
      */
     bool disconnect_peer(const transport_core::PeerInfo &peer)
     {
-      if (!running() || !peer.valid())
+      if (!peer.is_valid())
       {
         return false;
       }
 
       const bool disconnected = client_.disconnect(peer);
-      registry_.set_state(peer.node_id, transport_types::PeerState::Disconnected);
+
+      registry_.mark_disconnected(peer.node_id);
+      registry_.erase(peer.node_id);
+
       return disconnected;
     }
 
     /**
-     * @brief Send one sync envelope to one peer
+     * @brief Sends one sync envelope to one peer.
+     *
+     * @param peer Destination peer.
+     * @param sync_envelope Sync envelope.
+     * @return true on success.
      */
-    bool send_sync(const transport_core::PeerInfo &peer,
-                   const sync_core::SyncEnvelope &sync_envelope)
+    bool send_sync(
+        const transport_core::PeerInfo &peer,
+        const sync_core::SyncEnvelope &sync_envelope)
     {
-      if (!running() || !peer.valid() || !sync_envelope.valid())
+      if (!is_running() ||
+          !peer.is_valid() ||
+          !sync_envelope.is_valid())
       {
         return false;
       }
 
-      transport_core::TransportMessage message =
+      auto message =
           make_sync_message(peer, sync_envelope);
 
-      transport_core::TransportEnvelope envelope;
-      envelope.message = std::move(message);
-      envelope.to_peer = peer;
-      envelope.timestamp = now_ms();
-      envelope.retry_count = 0;
-      envelope.last_attempt_at = 0;
+      if (!message.is_valid())
+      {
+        return false;
+      }
 
-      const bool sent = client_.send(envelope);
+      transport_core::TransportEnvelope envelope{
+          std::move(message),
+          {},
+          peer};
+
+      const bool sent = client_.send(std::move(envelope));
 
       if (sent)
       {
-        registry_.touch(peer.node_id, now_ms());
+        registry_.touch(peer.node_id);
       }
       else
       {
@@ -194,14 +283,19 @@ namespace softadastra::transport::engine
     }
 
     /**
-     * @brief Send a batch of sync envelopes to one peer
+     * @brief Sends a batch of sync envelopes to one peer.
      *
-     * V1 transport protocol currently sends one sync operation per message.
+     * V1 transport protocol sends one sync operation per message.
+     *
+     * @param peer Destination peer.
+     * @param batch Sync envelope batch.
+     * @return Number of successfully sent envelopes.
      */
-    std::size_t send_sync_batch(const transport_core::PeerInfo &peer,
-                                const std::vector<sync_core::SyncEnvelope> &batch)
+    std::size_t send_sync_batch(
+        const transport_core::PeerInfo &peer,
+        const std::vector<sync_core::SyncEnvelope> &batch)
     {
-      if (!running() || !peer.valid())
+      if (!is_running() || !peer.is_valid())
       {
         return 0;
       }
@@ -220,68 +314,61 @@ namespace softadastra::transport::engine
     }
 
     /**
-     * @brief Poll and dispatch one inbound message
+     * @brief Polls and dispatches one inbound message.
      *
-     * Returns true if one inbound envelope was processed,
-     * false if no message was available or dispatch failed.
+     * @return true if one inbound envelope was handled successfully.
      */
     bool poll_once()
     {
-      if (!running())
+      if (!is_running())
       {
         return false;
       }
 
       const auto inbound = server_.poll();
+
       if (!inbound.has_value())
       {
         return false;
       }
 
-      if (inbound->from_peer.valid())
-      {
-        transport_peer::PeerSession session;
-        session.peer = inbound->from_peer;
-        session.state = transport_types::PeerState::Connected;
-        session.last_seen_at = now_ms();
-        registry_.upsert(std::move(session));
-      }
+      update_registry_from_inbound(*inbound);
 
-      const auto result = dispatcher_.dispatch(inbound->message);
+      const auto result =
+          dispatcher_.dispatch(inbound->message);
 
-      if (!result.success)
+      if (result.is_err())
       {
-        if (inbound->from_peer.valid())
+        if (inbound->from_peer.is_valid())
         {
           registry_.mark_error(inbound->from_peer.node_id);
         }
+
         return false;
       }
 
-      if (inbound->from_peer.valid())
+      if (inbound->from_peer.is_valid())
       {
-        registry_.touch(inbound->from_peer.node_id, now_ms());
+        registry_.touch(inbound->from_peer.node_id);
       }
 
-      if (result.produced_ack && result.reply.has_value() && inbound->from_peer.valid())
-      {
-        transport_core::TransportEnvelope reply_envelope;
-        reply_envelope.message = *result.reply;
-        reply_envelope.to_peer = inbound->from_peer;
-        reply_envelope.timestamp = now_ms();
-        reply_envelope.retry_count = 0;
-        reply_envelope.last_attempt_at = 0;
+      const auto &value = result.value();
 
-        client_.send(reply_envelope);
+      if (value.produced_ack &&
+          value.reply.has_value() &&
+          inbound->from_peer.is_valid())
+      {
+        send_reply(inbound->from_peer, *value.reply);
       }
 
-      return result.handled;
+      return value.handled;
     }
 
     /**
-     * @brief Poll up to max_messages inbound messages
+     * @brief Polls up to max_messages inbound messages.
      *
-     * Returns the number of successfully processed messages.
+     * @param max_messages Maximum number of messages to process.
+     * @return Number of successfully processed messages.
      */
     std::size_t poll_many(std::size_t max_messages)
     {
@@ -301,137 +388,189 @@ namespace softadastra::transport::engine
     }
 
     /**
-     * @brief Send a ping to one peer
+     * @brief Sends a ping to one peer.
+     *
+     * @param peer Destination peer.
+     * @return true on success.
      */
     bool ping_peer(const transport_core::PeerInfo &peer)
     {
-      if (!running() || !peer.valid())
+      if (!is_running() || !peer.is_valid())
       {
         return false;
       }
 
-      transport_core::TransportMessage message;
-      message.type = transport_types::MessageType::Ping;
-      message.from_node_id = local_node_id();
+      auto message =
+          transport_core::TransportMessage::ping(
+              local_node_id());
+
       message.to_node_id = peer.node_id;
       message.correlation_id = make_correlation_id("ping");
 
-      transport_core::TransportEnvelope envelope;
-      envelope.message = std::move(message);
-      envelope.to_peer = peer;
-      envelope.timestamp = now_ms();
-
-      return client_.send(envelope);
+      return send_message(peer, std::move(message));
     }
 
     /**
-     * @brief Read-only access to peer registry
+     * @brief Sends a hello message to one peer.
+     *
+     * @param peer Destination peer.
+     * @return true on success.
      */
-    const transport_peer::PeerRegistry &peers() const noexcept
+    bool send_hello(const transport_core::PeerInfo &peer)
+    {
+      if (!is_running() || !peer.is_valid())
+      {
+        return false;
+      }
+
+      auto message =
+          transport_core::TransportMessage::hello(
+              local_node_id());
+
+      message.to_node_id = peer.node_id;
+      message.correlation_id = make_correlation_id("hello");
+
+      return send_message(peer, std::move(message));
+    }
+
+    /**
+     * @brief Sends one transport message to a peer.
+     *
+     * @param peer Destination peer.
+     * @param message Message to send.
+     * @return true on success.
+     */
+    bool send_message(
+        const transport_core::PeerInfo &peer,
+        transport_core::TransportMessage message)
+    {
+      if (!is_running() ||
+          !peer.is_valid() ||
+          !message.is_valid())
+      {
+        return false;
+      }
+
+      transport_core::TransportEnvelope envelope{
+          std::move(message),
+          {},
+          peer};
+
+      const bool sent = client_.send(std::move(envelope));
+
+      if (sent)
+      {
+        registry_.touch(peer.node_id);
+      }
+      else
+      {
+        registry_.mark_error(peer.node_id);
+      }
+
+      return sent;
+    }
+
+    /**
+     * @brief Returns read-only access to the peer registry.
+     *
+     * @return Peer registry.
+     */
+    [[nodiscard]] const transport_peer::PeerRegistry &
+    peers() const noexcept
     {
       return registry_;
     }
 
     /**
-     * @brief Read-only access to context
+     * @brief Returns read-only access to context.
+     *
+     * @return Transport context.
      */
-    const transport_core::TransportContext &context() const noexcept
+    [[nodiscard]] const transport_core::TransportContext &
+    context() const noexcept
     {
       return context_;
     }
 
-    bool send_hello(const transport_core::PeerInfo &peer)
-    {
-      if (!running() || !peer.valid())
-      {
-        return false;
-      }
-
-      transport_core::TransportEnvelope envelope;
-      envelope.message = make_hello_message(peer);
-      envelope.to_peer = peer;
-      envelope.timestamp = now_ms();
-
-      return client_.send(envelope);
-    }
-
   private:
-    transport_core::TransportMessage make_sync_message(
+    /**
+     * @brief Builds a transport sync message from a sync envelope.
+     */
+    [[nodiscard]] transport_core::TransportMessage
+    make_sync_message(
         const transport_core::PeerInfo &peer,
         const sync_core::SyncEnvelope &sync_envelope) const
     {
-      transport_core::TransportMessage message;
-      message.type = transport_types::MessageType::SyncBatch;
-      message.from_node_id = local_node_id();
-      message.to_node_id = peer.node_id;
-      message.correlation_id = sync_envelope.operation.sync_id;
-      message.payload = encode_sync_payload(sync_envelope.operation);
-      return message;
-    }
+      auto payload =
+          transport_dispatcher::MessageDispatcher::encode_sync_operation(
+              sync_envelope.operation);
 
-    transport_core::TransportMessage make_hello_message(const transport_core::PeerInfo &peer) const
-    {
-      transport_core::TransportMessage message;
-      message.type = transport_types::MessageType::Hello;
-      message.from_node_id = local_node_id();
-      message.to_node_id = peer.node_id;
-      message.correlation_id = make_correlation_id("hello");
-
-      const std::string node_id = local_node_id();
-      message.payload.assign(node_id.begin(), node_id.end());
-
-      return message;
-    }
-
-    static std::vector<std::uint8_t> encode_sync_payload(
-        const sync_core::SyncOperation &sync_op)
-    {
-      const std::vector<std::uint8_t> encoded_op =
-          store_encoding::OperationEncoder::encode(sync_op.op);
-
-      const std::size_t total_size =
-          sizeof(std::uint64_t) +
-          sizeof(std::uint64_t) +
-          encoded_op.size();
-
-      std::vector<std::uint8_t> buffer(total_size);
-      std::size_t offset = 0;
-
-      write_value(buffer, offset, sync_op.version);
-      write_value(buffer, offset, sync_op.timestamp);
-
-      if (!encoded_op.empty())
+      if (payload.empty())
       {
-        std::memcpy(buffer.data() + offset,
-                    encoded_op.data(),
-                    encoded_op.size());
+        return {};
       }
 
-      return buffer;
+      auto message =
+          transport_core::TransportMessage::sync_batch(
+              local_node_id(),
+              std::move(payload));
+
+      message.to_node_id = peer.node_id;
+      message.correlation_id = sync_envelope.operation.sync_id;
+
+      return message;
     }
 
-    const std::string &local_node_id() const
+    /**
+     * @brief Sends a reply message to a peer.
+     */
+    bool send_reply(
+        const transport_core::PeerInfo &peer,
+        transport_core::TransportMessage reply)
     {
-      return context_.sync_ref().node_id();
+      return send_message(peer, std::move(reply));
     }
 
-    std::string make_correlation_id(const std::string &prefix) const
+    /**
+     * @brief Updates registry state from inbound envelope peer metadata.
+     */
+    void update_registry_from_inbound(
+        const transport_core::TransportEnvelope &inbound)
     {
-      return prefix + "-" + std::to_string(now_ms());
+      if (!inbound.from_peer.is_valid())
+      {
+        return;
+      }
+
+      transport_peer::PeerSession session{inbound.from_peer};
+      session.mark_connected();
+
+      registry_.upsert(std::move(session));
     }
 
-    template <typename T>
-    static void write_value(std::vector<std::uint8_t> &buffer,
-                            std::size_t &offset,
-                            T value)
+    /**
+     * @brief Returns local node id from the sync engine.
+     */
+    [[nodiscard]] std::string local_node_id() const
     {
-      std::memcpy(buffer.data() + offset, &value, sizeof(T));
-      offset += sizeof(T);
+      auto sync_result = context_.sync_checked();
+
+      if (sync_result.is_err())
+      {
+        return {};
+      }
+
+      return sync_result.value()->node_id();
     }
 
-    static std::uint64_t now_ms()
+    /**
+     * @brief Creates a correlation id.
+     */
+    [[nodiscard]] static std::string
+    make_correlation_id(const std::string &prefix)
     {
-      return static_cast<std::uint64_t>(std::time(nullptr)) * 1000ULL;
+      return prefix + "-" +
+             std::to_string(core_time::Timestamp::now().millis());
     }
 
   private:
@@ -443,9 +582,10 @@ namespace softadastra::transport::engine
     transport_dispatcher::MessageDispatcher dispatcher_;
     transport_peer::PeerRegistry registry_;
 
-    transport_types::TransportStatus status_{transport_types::TransportStatus::Stopped};
+    transport_types::TransportStatus status_{
+        transport_types::TransportStatus::Stopped};
   };
 
 } // namespace softadastra::transport::engine
 
-#endif
+#endif // SOFTADASTRA_TRANSPORT_ENGINE_HPP

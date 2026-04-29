@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.20)
 set(TRANSPORT_EXAMPLES
     basic_server
     basic_client
+    message_codec
+    peer_registry
+    dispatcher_ping
     sync_bridge
     full_sync_demo_server
     full_sync_demo_client
