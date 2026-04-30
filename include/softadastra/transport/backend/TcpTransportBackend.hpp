@@ -106,10 +106,11 @@ namespace softadastra::transport::backend
         return false;
       }
 
-      server_.set_reuse_addr(true);
-      server_.set_keepalive(config_.enable_keepalive);
-      server_.set_recv_timeout(config_.read_timeout);
-      server_.set_send_timeout(config_.write_timeout);
+      if (!configure_server_socket(server_))
+      {
+        server_.close();
+        return false;
+      }
 
       if (!server_.bind(config_.bind_host, config_.bind_port))
       {
@@ -179,9 +180,11 @@ namespace softadastra::transport::backend
         return false;
       }
 
-      socket.set_keepalive(config_.enable_keepalive);
-      socket.set_recv_timeout(config_.read_timeout);
-      socket.set_send_timeout(config_.write_timeout);
+      if (!configure_socket(socket))
+      {
+        socket.close();
+        return false;
+      }
 
       if (!socket.connect(peer.host, peer.port))
       {
@@ -379,6 +382,36 @@ namespace softadastra::transport::backend
           });
     }
 
+    [[nodiscard]] bool configure_socket(platform::TcpSocket &socket)
+    {
+      if (!socket.set_keepalive(config_.enable_keepalive))
+      {
+        return false;
+      }
+
+      if (!socket.set_recv_timeout(config_.read_timeout))
+      {
+        return false;
+      }
+
+      if (!socket.set_send_timeout(config_.write_timeout))
+      {
+        return false;
+      }
+
+      return true;
+    }
+
+    [[nodiscard]] bool configure_server_socket(platform::TcpSocket &socket)
+    {
+      if (!socket.set_reuse_addr(true))
+      {
+        return false;
+      }
+
+      return configure_socket(socket);
+    }
+
     /**
      * @brief Accepts one new connection if available.
      */
@@ -391,9 +424,11 @@ namespace softadastra::transport::backend
         return;
       }
 
-      accepted.set_keepalive(config_.enable_keepalive);
-      accepted.set_recv_timeout(config_.read_timeout);
-      accepted.set_send_timeout(config_.write_timeout);
+      if (!configure_socket(accepted))
+      {
+        accepted.close();
+        return;
+      }
 
       Client client{};
       client.peer = make_pending_peer();
