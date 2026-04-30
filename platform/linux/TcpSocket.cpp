@@ -1,5 +1,16 @@
-/*
- * TcpSocket.cpp
+/**
+ *
+ *  @file TcpSocket.cpp
+ *  @author Gaspard Kirira
+ *
+ *  Copyright 2026, Softadastra.
+ *  All rights reserved.
+ *  https://github.com/softadastra/softadastra
+ *
+ *  Licensed under the Apache License, Version 2.0.
+ *
+ *  Softadastra Transport
+ *
  */
 
 #include <softadastra/transport/platform/linux/TcpSocket.hpp>
@@ -8,7 +19,6 @@
 #include <cerrno>
 #include <cstring>
 #include <netinet/in.h>
-#include <stdexcept>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -17,33 +27,48 @@ namespace softadastra::transport::platform::os_linux
 {
   namespace
   {
-    ::sockaddr_in make_sockaddr(const std::string &host, std::uint16_t port)
+
+    [[nodiscard]] bool make_sockaddr(
+        const std::string &host,
+        std::uint16_t port,
+        ::sockaddr_in &addr) noexcept
     {
-      ::sockaddr_in addr{};
+      addr = {};
       addr.sin_family = AF_INET;
       addr.sin_port = htons(port);
 
-      if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1)
+      return ::inet_pton(
+                 AF_INET,
+                 host.c_str(),
+                 &addr.sin_addr) == 1;
+    }
+
+    [[nodiscard]] ::timeval make_timeval(
+        core_time::Duration timeout) noexcept
+    {
+      const auto millis = timeout.millis();
+
+      ::timeval tv{};
+
+      if (millis <= 0)
       {
-        throw std::runtime_error("TcpSocket: invalid IPv4 address: " + host);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        return tv;
       }
 
-      return addr;
-    }
+      tv.tv_sec =
+          static_cast<decltype(tv.tv_sec)>(millis / 1000);
 
-    ::timeval make_timeval(std::uint64_t timeout_ms)
-    {
-      ::timeval tv{};
-      tv.tv_sec = static_cast<decltype(tv.tv_sec)>(timeout_ms / 1000ULL);
-      tv.tv_usec = static_cast<decltype(tv.tv_usec)>((timeout_ms % 1000ULL) * 1000ULL);
+      tv.tv_usec =
+          static_cast<decltype(tv.tv_usec)>((millis % 1000) * 1000);
+
       return tv;
     }
+
   } // namespace
 
-  TcpSocket::TcpSocket() noexcept
-      : fd_(-1)
-  {
-  }
+  TcpSocket::TcpSocket() noexcept = default;
 
   TcpSocket::TcpSocket(int fd) noexcept
       : fd_(fd)
@@ -78,26 +103,35 @@ namespace softadastra::transport::platform::os_linux
     close();
 
     fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+
     return fd_ >= 0;
   }
 
-  bool TcpSocket::bind(const std::string &host, std::uint16_t port)
+  bool TcpSocket::bind(
+      const std::string &host,
+      std::uint16_t port)
   {
-    if (!valid() && !open())
+    if (!is_valid() && !open())
     {
       return false;
     }
 
-    const auto addr = make_sockaddr(host, port);
+    ::sockaddr_in addr{};
 
-    return ::bind(fd_,
-                  reinterpret_cast<const ::sockaddr *>(&addr),
-                  sizeof(addr)) == 0;
+    if (!make_sockaddr(host, port, addr))
+    {
+      return false;
+    }
+
+    return ::bind(
+               fd_,
+               reinterpret_cast<const ::sockaddr *>(&addr),
+               sizeof(addr)) == 0;
   }
 
   bool TcpSocket::listen(int backlog)
   {
-    if (!valid())
+    if (!is_valid())
     {
       return false;
     }
@@ -107,7 +141,7 @@ namespace softadastra::transport::platform::os_linux
 
   TcpSocket TcpSocket::accept()
   {
-    if (!valid())
+    if (!is_valid())
     {
       return TcpSocket{};
     }
@@ -115,10 +149,11 @@ namespace softadastra::transport::platform::os_linux
     ::sockaddr_in client_addr{};
     ::socklen_t client_len = sizeof(client_addr);
 
-    const int client_fd = ::accept(
-        fd_,
-        reinterpret_cast<::sockaddr *>(&client_addr),
-        &client_len);
+    const int client_fd =
+        ::accept(
+            fd_,
+            reinterpret_cast<::sockaddr *>(&client_addr),
+            &client_len);
 
     if (client_fd < 0)
     {
@@ -128,37 +163,50 @@ namespace softadastra::transport::platform::os_linux
     return TcpSocket{client_fd};
   }
 
-  bool TcpSocket::connect(const std::string &host, std::uint16_t port)
+  bool TcpSocket::connect(
+      const std::string &host,
+      std::uint16_t port)
   {
-    if (!valid() && !open())
+    if (!is_valid() && !open())
     {
       return false;
     }
 
-    const auto addr = make_sockaddr(host, port);
+    ::sockaddr_in addr{};
 
-    return ::connect(fd_,
-                     reinterpret_cast<const ::sockaddr *>(&addr),
-                     sizeof(addr)) == 0;
+    if (!make_sockaddr(host, port, addr))
+    {
+      return false;
+    }
+
+    return ::connect(
+               fd_,
+               reinterpret_cast<const ::sockaddr *>(&addr),
+               sizeof(addr)) == 0;
   }
 
-  std::size_t TcpSocket::send_all(const void *data, std::size_t size)
+  std::size_t TcpSocket::send_all(
+      const void *data,
+      std::size_t size)
   {
-    if (!valid() || data == nullptr || size == 0)
+    if (!is_valid() || data == nullptr || size == 0)
     {
       return 0;
     }
 
-    const auto *bytes = static_cast<const std::uint8_t *>(data);
+    const auto *bytes =
+        static_cast<const std::uint8_t *>(data);
+
     std::size_t total_sent = 0;
 
     while (total_sent < size)
     {
-      const ssize_t sent = ::send(
-          fd_,
-          bytes + total_sent,
-          size - total_sent,
-          0);
+      const ssize_t sent =
+          ::send(
+              fd_,
+              bytes + total_sent,
+              size - total_sent,
+              0);
 
       if (sent < 0)
       {
@@ -181,25 +229,30 @@ namespace softadastra::transport::platform::os_linux
     return total_sent;
   }
 
-  std::size_t TcpSocket::recv_all(void *data, std::size_t size)
+  std::size_t TcpSocket::recv_all(
+      void *data,
+      std::size_t size)
   {
-    if (!valid() || data == nullptr || size == 0)
+    if (!is_valid() || data == nullptr || size == 0)
     {
       return 0;
     }
 
-    auto *bytes = static_cast<std::uint8_t *>(data);
+    auto *bytes =
+        static_cast<std::uint8_t *>(data);
+
     std::size_t total_read = 0;
 
     while (total_read < size)
     {
-      const ssize_t n = ::recv(
-          fd_,
-          bytes + total_read,
-          size - total_read,
-          0);
+      const ssize_t received =
+          ::recv(
+              fd_,
+              bytes + total_read,
+              size - total_read,
+              0);
 
-      if (n < 0)
+      if (received < 0)
       {
         if (errno == EINTR)
         {
@@ -209,29 +262,32 @@ namespace softadastra::transport::platform::os_linux
         return total_read;
       }
 
-      if (n == 0)
+      if (received == 0)
       {
         break;
       }
 
-      total_read += static_cast<std::size_t>(n);
+      total_read += static_cast<std::size_t>(received);
     }
 
     return total_read;
   }
 
-  std::size_t TcpSocket::recv_some(void *data, std::size_t size)
+  std::size_t TcpSocket::recv_some(
+      void *data,
+      std::size_t size)
   {
-    if (!valid() || data == nullptr || size == 0)
+    if (!is_valid() || data == nullptr || size == 0)
     {
       return 0;
     }
 
     for (;;)
     {
-      const ssize_t n = ::recv(fd_, data, size, 0);
+      const ssize_t received =
+          ::recv(fd_, data, size, 0);
 
-      if (n < 0)
+      if (received < 0)
       {
         if (errno == EINTR)
         {
@@ -241,28 +297,31 @@ namespace softadastra::transport::platform::os_linux
         return 0;
       }
 
-      if (n == 0)
+      if (received == 0)
       {
         return 0;
       }
 
-      return static_cast<std::size_t>(n);
+      return static_cast<std::size_t>(received);
     }
   }
 
   void TcpSocket::close() noexcept
   {
-    if (fd_ >= 0)
+    if (fd_ < 0)
     {
-      ::shutdown(fd_, SHUT_RDWR);
-      ::close(fd_);
-      fd_ = -1;
+      return;
     }
+
+    ::shutdown(fd_, SHUT_RDWR);
+    ::close(fd_);
+
+    fd_ = -1;
   }
 
   bool TcpSocket::set_reuse_addr(bool enabled)
   {
-    if (!valid())
+    if (!is_valid())
     {
       return false;
     }
@@ -279,7 +338,7 @@ namespace softadastra::transport::platform::os_linux
 
   bool TcpSocket::set_keepalive(bool enabled)
   {
-    if (!valid())
+    if (!is_valid())
     {
       return false;
     }
@@ -294,14 +353,14 @@ namespace softadastra::transport::platform::os_linux
                sizeof(value)) == 0;
   }
 
-  bool TcpSocket::set_recv_timeout_ms(std::uint64_t timeout_ms)
+  bool TcpSocket::set_recv_timeout(core_time::Duration timeout)
   {
-    if (!valid())
+    if (!is_valid())
     {
       return false;
     }
 
-    const auto tv = make_timeval(timeout_ms);
+    const auto tv = make_timeval(timeout);
 
     return ::setsockopt(
                fd_,
@@ -311,14 +370,14 @@ namespace softadastra::transport::platform::os_linux
                sizeof(tv)) == 0;
   }
 
-  bool TcpSocket::set_send_timeout_ms(std::uint64_t timeout_ms)
+  bool TcpSocket::set_send_timeout(core_time::Duration timeout)
   {
-    if (!valid())
+    if (!is_valid())
     {
       return false;
     }
 
-    const auto tv = make_timeval(timeout_ms);
+    const auto tv = make_timeval(timeout);
 
     return ::setsockopt(
                fd_,
@@ -328,7 +387,7 @@ namespace softadastra::transport::platform::os_linux
                sizeof(tv)) == 0;
   }
 
-  bool TcpSocket::valid() const noexcept
+  bool TcpSocket::is_valid() const noexcept
   {
     return fd_ >= 0;
   }

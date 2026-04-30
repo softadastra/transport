@@ -6,467 +6,349 @@ It is the network delivery layer used by `softadastra/sync`.
 
 The core rule is:
 
-> Transport moves bytes. Sync owns meaning.
+> *Transport moves bytes. Sync owns meaning.*
 
 ## Why Softadastra needs Transport
 
-`softadastra/wal` guarantees durability.
+Each module in the stack has one responsibility:
 
-`softadastra/store` applies durable operations to local state.
+```
+WAL        →  durability
+Store      →  local state
+Sync       →  operation propagation logic
+Transport  →  message delivery
+Discovery  →  peer discovery
+```
 
-`softadastra/sync` creates sync envelopes and tracks acknowledgement, retry, queueing, and remote application.
+The transport module does not decide what an operation means. It only delivers messages to the right peer and dispatches inbound messages to sync.
 
-`softadastra/transport` moves those sync envelopes between peers.
+## What Transport guarantees
 
-This separation keeps the architecture clean:
+- messages have a stable binary format
+- frames are length-prefixed
+- peers can be represented consistently
+- inbound messages can be dispatched to sync
+- outbound sync envelopes can be encoded and sent
+- acknowledgements can be represented and forwarded
+- peer connection state can be observed
 
-```text id="transport-layering"
-WAL        -> durability
-Store      -> local state
-Sync       -> operation propagation logic
-Transport  -> message delivery
-Discovery  -> peer discovery
+> Transport does not guarantee durable delivery by itself.
+> Durability belongs to WAL and sync retry/outbox logic.
 
-The transport module does not decide what an operation means.
+## What Transport does NOT do
 
-It only delivers messages to the right peer and dispatches inbound messages to sync.
+- WAL persistence
+- store mutation logic
+- conflict resolution
+- sync retry policy
+- peer discovery
+- encryption
+- authentication
+- distributed consensus
 
-What Transport guarantees
+## Installation
 
-The Transport module helps guarantee:
-
-messages have a stable binary format
-frames are length-prefixed
-peers can be represented consistently
-inbound messages can be dispatched to sync
-outbound sync envelopes can be encoded and sent
-acknowledgements can be represented and forwarded
-peer connection state can be observed
-
-Transport does not guarantee durable delivery by itself.
-
-Durability belongs to WAL and sync retry/outbox logic.
-
-What Transport does not do
-
-The Transport module does not implement:
-
-WAL persistence
-store mutation logic
-conflict resolution
-sync retry policy
-peer discovery
-encryption
-authentication
-distributed consensus
-
-Those belong to other Softadastra modules.
-
-Installation
+```bash
 vix add @softadastra/transport
-Main header
+```
 
-Use the public aggregator:
+### Main header
 
+```cpp
 #include <softadastra/transport/Transport.hpp>
+```
 
 For full integration:
 
+```cpp
 #include <softadastra/store/Store.hpp>
 #include <softadastra/sync/Sync.hpp>
 #include <softadastra/transport/Transport.hpp>
-Main concepts
+```
 
-The Transport module is built around these concepts:
+## Main concepts
 
-TransportConfig
-PeerInfo
-TransportMessage
-TransportEnvelope
-Frame
-MessageEncoder
-MessageDecoder
-TransportAck
-PeerSession
-PeerRegistry
-ITransportBackend
-TcpTransportBackend
-TransportClient
-TransportServer
-MessageDispatcher
-TransportEngine
-TransportConfig
+- `TransportConfig`
+- `PeerInfo`
+- `TransportMessage`
+- `TransportEnvelope`
+- `Frame`
+- `MessageEncoder` / `MessageDecoder`
+- `TransportAck`
+- `PeerSession`
+- `PeerRegistry`
+- `ITransportBackend`
+- `TcpTransportBackend`
+- `TransportClient`
+- `TransportServer`
+- `MessageDispatcher`
+- `TransportEngine`
 
-TransportConfig controls the local bind address, timeouts, frame limits, and keepalive behavior.
+Controls bind address, timeouts, frame limits, and keepalive behavior.
 
-Create a local configuration:
+```cpp
+// Local configuration
+auto config = transport::core::TransportConfig::local(7000);
 
-auto config =
-    transport::core::TransportConfig::local(7000);
+// Server configuration
+auto config = transport::core::TransportConfig::server(7000);
 
-Create a server configuration:
-
-auto config =
-    transport::core::TransportConfig::server(7000);
-
-Customize timeouts:
-
-config.connect_timeout = core::time::Duration::from_seconds(5);
-config.read_timeout = core::time::Duration::from_seconds(5);
-config.write_timeout = core::time::Duration::from_seconds(5);
+// Customize timeouts
+config.connect_timeout    = core::time::Duration::from_seconds(5);
+config.read_timeout       = core::time::Duration::from_seconds(5);
+config.write_timeout      = core::time::Duration::from_seconds(5);
 config.keepalive_interval = core::time::Duration::from_seconds(10);
-config.max_frame_size = 1024 * 1024;
-
-Validate configuration:
+config.max_frame_size     = 1024 * 1024;
 
 if (!config.is_valid())
 {
-  return 1;
+    return 1;
 }
-PeerInfo
+```
 
-PeerInfo identifies a peer.
+Identifies a peer. Contains: `node_id`, `host`, `port`.
 
-It contains:
-
-node_id
-host
-port
-
-Example:
-
-transport::core::PeerInfo peer{
-    "node-b",
-    "127.0.0.1",
-    7001};
+```cpp
+transport::core::PeerInfo peer{"node-b", "127.0.0.1", 7001};
 
 if (!peer.is_valid())
 {
-  return 1;
+    return 1;
 }
 
-Create a local peer:
+// Local peer helper
+auto peer = transport::core::PeerInfo::local("node-a", 7000);
+```
 
-auto peer =
-    transport::core::PeerInfo::local("node-a", 7000);
-TransportMessage
+## `TransportMessage`
 
-TransportMessage is the logical protocol message exchanged between peers.
-
-It contains:
-
-type
-from_node_id
-to_node_id
-correlation_id
-payload
-
-Create a hello message:
-
-auto hello =
-    transport::core::TransportMessage::hello("node-a");
-
-hello.to_node_id = "node-b";
+```cpp
+// Hello
+auto hello = transport::core::TransportMessage::hello("node-a");
+hello.to_node_id     = "node-b";
 hello.correlation_id = "hello-1";
 
-Create a ping message:
-
-auto ping =
-    transport::core::TransportMessage::ping("node-a");
-
-ping.to_node_id = "node-b";
+// Ping
+auto ping = transport::core::TransportMessage::ping("node-a");
+ping.to_node_id     = "node-b";
 ping.correlation_id = "ping-1";
 
-Create a sync batch message:
-
-auto message =
-    transport::core::TransportMessage::sync_batch(
-        "node-a",
-        payload);
-
-message.to_node_id = "node-b";
+// Sync batch
+auto message = transport::core::TransportMessage::sync_batch("node-a", payload);
+message.to_node_id     = "node-b";
 message.correlation_id = "sync-1";
-
-Validate a message:
 
 if (!message.is_valid())
 {
-  return 1;
+    return 1;
 }
-Message types
+```
 
-Supported message types:
+### Message types
 
-transport::types::MessageType::Hello
-transport::types::MessageType::SyncBatch
-transport::types::MessageType::Ack
-transport::types::MessageType::Ping
-transport::types::MessageType::Pong
+- `transport::types::MessageType::Hello`
+- `transport::types::MessageType::SyncBatch`
+- `transport::types::MessageType::Ack`
+- `transport::types::MessageType::Ping`
+- `transport::types::MessageType::Pong`
 
 Helpers:
 
+```cpp
 transport::types::to_string(type);
 transport::types::is_valid(type);
 transport::types::is_liveness(type);
 transport::types::is_handshake(type);
-TransportEnvelope
+```
 
-TransportEnvelope wraps a TransportMessage with runtime delivery metadata.
+## `TransportEnvelope`
 
-It tracks:
-
-message
-from_peer
-to_peer
-timestamp
-retry_count
-last_attempt_at
-
-Example:
-
-transport::core::TransportEnvelope envelope{
-    message,
-    {},
-    peer};
+```cpp
+transport::core::TransportEnvelope envelope{message, {}, peer};
 
 if (envelope.is_valid())
 {
-  envelope.mark_attempt();
+    envelope.mark_attempt();
 }
-Frame
+```
 
-Frame is a length-prefixed payload.
+## `Frame`
 
-Wire format:
+A length-prefixed payload.
 
-uint32 payload_size
-bytes  payload
+```
+uint32  payload_size
+bytes   payload
+```
 
-Example:
-
+```cpp
 transport::utils::Frame frame{{1, 2, 3}};
 
 if (frame.is_valid())
 {
-  auto total_size = frame.encoded_size();
+    auto total_size = frame.encoded_size();
 }
-Encoding messages
+```
 
-MessageEncoder converts a TransportMessage into bytes.
+## Encoding messages
 
-Encode a message payload:
+```cpp
+// Encode a message payload
+// Encode a full frame
+auto frame = transport::encoding::MessageEncoder::encode_frame(message);
 
-auto payload =
-    transport::encoding::MessageEncoder::encode_message(message);
+// Build a Frame object
+auto frame = transport::encoding::MessageEncoder::make_frame(message);
+```
 
-Encode a full frame:
+## Decoding messages
 
-auto frame =
-    transport::encoding::MessageEncoder::encode_frame(message);
+```cpp
+// Decode a message payload
+auto decoded = transport::encoding::MessageDecoder::decode_message(payload);
+auto frame = transport::encoding::MessageDecoder::decode_frame(raw_bytes);
 
-Build a Frame object:
+// Decode a framed message directly
+auto message = transport::encoding::MessageDecoder::decode_framed_message(raw_bytes);
+```
 
-auto frame =
-    transport::encoding::MessageEncoder::make_frame(message);
-Decoding messages
+## `TransportAck`
 
-Decode a message payload:
+Represents a transport-level acknowledgement, bridged to `SyncEngine::receive_ack(sync_id)`.
 
-auto decoded =
-    transport::encoding::MessageDecoder::decode_message(payload);
-
-Decode a frame:
-
-auto frame =
-    transport::encoding::MessageDecoder::decode_frame(raw_bytes);
-
-Decode a framed message directly:
-
-auto message =
-    transport::encoding::MessageDecoder::decode_framed_message(raw_bytes);
-TransportAck
-
-TransportAck represents a transport-level acknowledgement.
-
-It is usually bridged to:
-
-SyncEngine::receive_ack(sync_id)
-
-Create an ack:
-
-transport::ack::TransportAck ack{
-    "node-a-1",
-    "node-b"};
-
-if (!ack.is_valid())
+```cpp
+transport::ack::TransportAck ack{"node-a-1", "node-b"};
 {
-  return 1;
+    return 1;
 }
 
-Encode an ack payload:
+// Encode / decode ack payloads
+auto payload = transport::dispatcher::MessageDispatcher::encode_ack(ack);
+auto decoded = transport::dispatcher::MessageDispatcher::decode_ack(payload);
+```
 
-auto payload =
-    transport::dispatcher::MessageDispatcher::encode_ack(ack);
+## `PeerSession`
 
-Decode an ack payload:
+Stores runtime state for one known peer: `peer`, `state`, `last_seen_at`, `error_count`.
 
-auto decoded =
-    transport::dispatcher::MessageDispatcher::decode_ack(payload);
-PeerSession
-
-PeerSession stores runtime state for one known peer.
-
-It tracks:
-
-peer
-state
-last_seen_at
-error_count
-
-Example:
-
+```cpp
 transport::peer::PeerSession session{peer};
 
-session.mark_connecting();
-session.mark_connected();
 
 if (session.available())
 {
-  // peer can exchange messages
+    // peer can exchange messages
 }
 
-Mark errors:
-
 session.mark_faulted();
-PeerRegistry
+```
 
-PeerRegistry stores known peers in memory.
+## `PeerRegistry`
 
+Stores known peers in memory.
+
+```cpp
 transport::peer::PeerRegistry registry;
 
 registry.upsert_peer(peer);
-registry.mark_connected(peer.node_id);
 
-Find a peer:
-
+// Find a peer
 auto *session = registry.find(peer.node_id);
 
 if (session != nullptr && session->connected())
 {
-  // peer is connected
+    // peer is connected
 }
 
-Inspect peers:
-
+// Inspect
 registry.size();
 registry.connected_peers();
 registry.faulted_peers();
 registry.peers();
 
-Update state:
-
+// Update state
 registry.mark_connecting(peer.node_id);
 registry.mark_connected(peer.node_id);
 registry.mark_disconnected(peer.node_id);
 registry.mark_faulted(peer.node_id);
 registry.touch(peer.node_id);
-Transport status
+```
 
-The engine status can be:
+## Transport status
 
-transport::types::TransportStatus::Stopped
-transport::types::TransportStatus::Starting
-transport::types::TransportStatus::Running
-transport::types::TransportStatus::Stopping
-transport::types::TransportStatus::Failed
+- `transport::types::TransportStatus::Stopped`
+- `transport::types::TransportStatus::Starting`
+- `transport::types::TransportStatus::Running`
+- `transport::types::TransportStatus::Stopping`
+- `transport::types::TransportStatus::Failed`
 
 Helpers:
-
+```cpp
 transport::types::to_string(status);
 transport::types::is_running(status);
 transport::types::is_transitioning(status);
 transport::types::is_terminal(status);
-Backend interface
+```
 
-ITransportBackend is the low-level delivery interface.
+## Backend interface
 
-A backend implements:
+`ITransportBackend` is the low-level delivery interface. A backend implements: `start()`, `stop()`, `is_running()`, `connect()`, `disconnect()`, `send()`, `poll()`, `peers()`.
 
-start()
-stop()
-is_running()
-connect(peer)
-disconnect(peer)
-send(envelope)
-poll()
-peers()
-
-A custom backend skeleton:
-
+```cpp
 class MyBackend : public transport::backend::ITransportBackend
 {
 public:
-  bool start() override
-  {
-    return true;
-  }
+    bool start() override { return true; }
+    void stop() override {}
 
-  void stop() override
-  {
-  }
+    bool connect(const transport::core::PeerInfo &peer) override
+    {
+        return peer.is_valid();
+    }
 
-  bool is_running() const noexcept override
-  {
-    return true;
-  }
+    bool disconnect(const transport::core::PeerInfo &peer) override
+    {
+        return peer.is_valid();
+    }
 
-  bool connect(const transport::core::PeerInfo &peer) override
-  {
-    return peer.is_valid();
-  }
+    bool send(const transport::core::TransportEnvelope &envelope) override
+    {
+        return envelope.is_valid();
+    }
 
-  bool disconnect(const transport::core::PeerInfo &peer) override
-  {
-    return peer.is_valid();
-  }
+    std::optional<transport::core::TransportEnvelope> poll() override
+    {
+        return std::nullopt;
+    }
 
-  bool send(const transport::core::TransportEnvelope &envelope) override
-  {
-    return envelope.is_valid();
-  }
-
-  std::optional<transport::core::TransportEnvelope> poll() override
-  {
-    return std::nullopt;
-  }
-
-  std::vector<transport::core::PeerInfo> peers() const override
-  {
-    return {};
-  }
+    std::vector<transport::core::PeerInfo> peers() const override
+    {
+        return {};
+    }
 };
-TCP backend
+```
 
-TcpTransportBackend is the first Linux TCP backend.
+## TCP backend
 
-auto config =
-    transport::core::TransportConfig::local(7000);
+`TcpTransportBackend` is the first Linux TCP backend. Currently simple and blocking.
+
+```cpp
+auto config = transport::core::TransportConfig::local(7000);
 
 transport::backend::TcpTransportBackend backend{config};
 
 if (!backend.start())
 {
-  return 1;
 }
 
 backend.stop();
+```
 
-This backend is currently simple and blocking.
+## `TransportClient`
 
-TransportClient
+Thin outbound wrapper around a backend.
 
-TransportClient is a thin outbound wrapper around a backend.
-
+```cpp
 transport::client::TransportClient client{backend};
 
 client.connect(peer);
@@ -474,19 +356,18 @@ client.send_hello(peer, "node-a");
 client.send_ping(peer, "node-a");
 client.disconnect(peer);
 
-Send a custom message:
-
-auto message =
-    transport::core::TransportMessage::ping("node-a");
-
-message.to_node_id = peer.node_id;
+auto message = transport::core::TransportMessage::ping("node-a");
+message.to_node_id     = peer.node_id;
 message.correlation_id = "ping-1";
 
 client.send_to(peer, message);
-TransportServer
+```
 
-TransportServer is a thin inbound wrapper around a backend.
+## `TransportServer`
 
+Thin inbound wrapper around a backend.
+
+```cpp
 transport::server::TransportServer server{backend};
 
 server.start();
@@ -495,309 +376,256 @@ auto inbound = server.poll();
 
 if (inbound.has_value())
 {
-  // handle inbound->message
 }
 
 server.stop();
-MessageDispatcher
+```
 
-MessageDispatcher routes decoded messages to sync.
+## `MessageDispatcher`
 
-It handles:
+Routes decoded messages to sync. Handles: `Hello`, `Ping`, `Pong`, `Ack`, `SyncBatch`.
 
-Hello
-Ping
-Pong
-Ack
-SyncBatch
-
-Create a dispatcher:
-
-transport::dispatcher::MessageDispatcher dispatcher{
-    transport_context};
-
-Dispatch a message:
+```cpp
+transport::dispatcher::MessageDispatcher dispatcher{transport_context};
 
 auto result = dispatcher.dispatch(message);
 
 if (result.is_err())
 {
-  return 1;
+    return 1;
 }
 
-if (result.value().reply.has_value())
 {
-  auto reply = result.value().reply.value();
+    auto reply = result.value().reply.value();
 }
-Ping flow
+```
 
-When a Ping message is dispatched, the dispatcher creates a Pong reply.
+### Dispatch flows
 
-Ping received
-  -> dispatcher handles it
-  -> Pong reply produced
-Ack flow
+```
+Ping received       →  Pong reply produced
 
-When an Ack message is dispatched:
+Ack received        →  TransportAck decoded
+                    →  SyncEngine::receive_ack(sync_id)
 
-Ack message received
-  -> TransportAck decoded
-  -> SyncEngine::receive_ack(sync_id)
-SyncBatch flow
+SyncBatch received  →  sync operation decoded
+                    →  SyncEngine::receive_remote_operation(sync_operation)
+                    →  Ack reply produced
+```
 
-When a SyncBatch message is dispatched:
+## `TransportContext`
 
-SyncBatch received
-  -> sync operation decoded
-  -> SyncEngine::receive_remote_operation(sync_operation)
-  -> Ack reply produced
-TransportContext
+Connects transport to sync.
 
-TransportContext connects transport to sync.
-
-transport::core::TransportContext context{
-    transport_config,
-    sync_engine};
+```cpp
+transport::core::TransportContext context{transport_config, sync_engine};
 
 if (!context.is_valid())
 {
-  return 1;
+    return 1;
 }
 
-Checked sync access:
-
+// Checked sync access
 auto sync = context.sync_checked();
 
-if (sync.is_ok())
 {
-  auto *engine = sync.value();
+    auto *engine = sync.value();
 }
-TransportEngine
+```
 
-TransportEngine is the high-level facade.
+## `TransportEngine`
 
-It coordinates:
+The high-level facade. Coordinates: backend lifecycle, client send operations, server polling, peer registry updates, sync envelope encoding, and inbound dispatch.
 
-backend lifecycle
-client send operations
-server polling
-peer registry updates
-sync envelope encoding
-inbound dispatch
-Creating a transport engine
+### Setup
+
+```cpp
 store::engine::StoreEngine store{
     store::core::StoreConfig::durable("data/store.wal")};
 
-auto sync_config =
-    sync::core::SyncConfig::durable("node-a");
+auto sync_config = sync::core::SyncConfig::durable("node-a");
 
-sync::core::SyncContext sync_context{store, sync_config};
+sync::core::SyncContext  sync_context{store, sync_config};
 sync::engine::SyncEngine sync_engine{sync_context};
 
-auto transport_config =
-    transport::core::TransportConfig::local(7000);
-
+auto transport_config = transport::core::TransportConfig::local(7000);
 transport::core::TransportContext transport_context{
     transport_config,
     sync_engine};
 
 transport::backend::TcpTransportBackend backend{transport_config};
 
-transport::engine::TransportEngine engine{
-    transport_context,
-    backend};
-
-Start and stop:
+transport::engine::TransportEngine engine{transport_context, backend};
 
 if (!engine.start())
 {
-  return 1;
+    return 1;
 }
 
 engine.stop();
 
-Check status:
-
+// Check status
 if (engine.is_running())
 {
-  auto status = engine.status();
+    auto status = engine.status();
 }
-Connecting to a peer
-transport::core::PeerInfo peer{
-    "node-b",
-    "127.0.0.1",
-    7001};
+```
+
+### Connect to a peer
+
+```cpp
+transport::core::PeerInfo peer{"node-b", "127.0.0.1", 7001};
 
 if (!engine.connect_peer(peer))
 {
-  return 1;
+    return 1;
 }
 
-Send hello:
-
 engine.send_hello(peer);
-
-Send ping:
-
 engine.ping_peer(peer);
-
-Disconnect:
-
 engine.disconnect_peer(peer);
-Sending sync operations
+```
 
-Submit local store operation:
+### Send sync operations
 
+```cpp
 auto operation = store::core::Operation::put(
     store::types::Key{"doc:1"},
     store::types::Value::from_string("hello"));
 
-auto submitted =
-    sync_engine.submit_local_operation(operation);
+auto submitted = sync_engine.submit_local_operation(operation);
 
 if (submitted.is_err())
 {
-  return 1;
+    return 1;
 }
 
-Fetch sync batch:
+auto batch = sync_engine.next_batch();
+auto sent  = engine.send_sync_batch(peer, batch);
+```
 
-auto batch =
-    sync_engine.next_batch();
+### Poll inbound messages
 
-Send through transport:
-
-auto sent =
-    engine.send_sync_batch(peer, batch);
-Polling inbound messages
-
-Process one inbound message:
-
+```cpp
 engine.poll_once();
 
-Process up to N messages:
-
-auto processed =
-    engine.poll_many(16);
+auto processed = engine.poll_many(16);
+```
 
 Inbound processing flow:
 
+```
 backend receives framed bytes
-  -> MessageDecoder decodes TransportMessage
-  -> TransportServer returns TransportEnvelope
-  -> TransportEngine updates PeerRegistry
-  -> MessageDispatcher dispatches message
-  -> optional reply is sent back
-End-to-end local-first flow
-1. User writes data locally
-2. StoreEngine persists the operation through WAL
-3. SyncEngine wraps the operation into a SyncEnvelope
-4. TransportEngine encodes the SyncEnvelope as TransportMessage
-5. Transport backend sends framed bytes to the peer
-6. Remote backend receives framed bytes
-7. MessageDispatcher applies the remote sync operation
-8. Remote side produces Ack
-9. Sender receives Ack
+  →  MessageDecoder decodes TransportMessage
+  →  TransportServer returns TransportEnvelope
+  →  TransportEngine updates PeerRegistry
+  →  MessageDispatcher dispatches message
+  →  optional reply is sent back
+```
+
+## End-to-end local-first flow
+
+```
+1.  User writes data locally
+2.  StoreEngine persists the operation through WAL
+3.  SyncEngine wraps the operation into a SyncEnvelope
+4.  TransportEngine encodes the SyncEnvelope as TransportMessage
+5.  Transport backend sends framed bytes to the peer
+6.  Remote backend receives framed bytes
+7.  MessageDispatcher applies the remote sync operation
+8.  Remote side produces Ack
+9.  Sender receives Ack
 10. SyncEngine marks operation acknowledged
-Error handling
+```
 
-Most transport helpers return bool for simple operational success.
+Most transport helpers return `bool` for simple operational success.
 
-The dispatcher returns Result:
+The dispatcher returns `Result`:
 
+```cpp
 auto result = dispatcher.dispatch(message);
 
 if (result.is_err())
 {
-  const auto &error = result.error();
+    const auto &error = result.error();
 }
+```
 
-Context checked access also returns Result:
+Context checked access also returns `Result`:
 
-auto sync = transport_context.sync_checked();
+```cpp
 
 if (sync.is_err())
 {
-  const auto &error = sync.error();
+    const auto &error = sync.error();
 }
-Examples
+```
 
-Available examples:
+## Examples
 
-basic_server.cpp
-basic_client.cpp
-message_codec.cpp
-peer_registry.cpp
-dispatcher_ping.cpp
-sync_bridge.cpp
-full_sync_demo_server.cpp
-full_sync_demo_client.cpp
-drive_end_to_end_demo_server.cpp
-drive_end_to_end_demo_client.cpp
+| Example | Description |
+||-|
+| `basic_server.cpp` | Minimal server setup |
+| `basic_client.cpp` | Minimal client setup |
+| `message_codec.cpp` | Encoding and decoding |
+| `peer_registry.cpp` | Peer tracking |
+| `dispatcher_ping.cpp` | Ping/pong dispatch |
+| `sync_bridge.cpp` | Sync integration |
+| `full_sync_demo_server.cpp` | Full sync server |
+| `full_sync_demo_client.cpp` | Full sync client |
+| `drive_end_to_end_demo_server.cpp` | End-to-end server |
+| `drive_end_to_end_demo_client.cpp` | End-to-end client |
 
-Build examples:
-
+```bash
 cmake --build build
 
-or with preset:
+# or with preset
+```
 
-cmake --build --preset default
-Production notes
+## Production notes
 
-The current TCP backend is intentionally simple.
+- async TCP backend
+- TLS backend
+- WebSocket backend
+- HTTP adapter
+- P2P adapter
+- peer discovery integration
+- bounded outbound queues
+- backpressure
+- structured tracing
+- metrics
+- identity handshake
+- authentication and encryption
 
-For production-grade transport, the next steps are:
+> The public API should stay small while backends evolve.
 
-async TCP backend
-TLS backend
-WebSocket backend
-HTTP adapter
-P2P adapter
-peer discovery integration
-bounded outbound queues
-backpressure
-structured tracing
-metrics
-identity handshake
-authentication
-encryption
+## Design rules
 
-The public API should stay small while backends evolve.
+- transport moves bytes
+- sync owns operation meaning
+- store owns state
+- WAL owns durability
+- transport does not resolve conflicts
+- transport does not mutate store directly
+- transport dispatches to `SyncEngine`
+- message payloads remain opaque
+- peer state remains observable
+- backends do not contain sync business logic
+- delivery retries belong to sync/outbox policy
 
-Design rules
+## Summary
 
-Follow these rules when using Transport:
+`softadastra/transport` provides:
 
-transport moves bytes
-sync owns operation meaning
-store owns state
-WAL owns durability
-transport does not resolve conflicts
-transport does not mutate store directly
-transport dispatches to SyncEngine
-message payloads remain opaque
-peer state remains observable
-backends do not contain sync business logic
-delivery retries belong to sync/outbox policy
-Summary
+- peer identity
+- transport messages and envelopes
+- frames, encoding and decoding
+- acknowledgements
+- peer registry
+- client/server wrappers
+- backend interface
+- TCP backend
+- dispatcher
+- transport engine
 
-softadastra/transport is the message delivery layer for Softadastra.
-
-It provides:
-
-peer identity
-transport messages
-envelopes
-frames
-encoding and decoding
-acknowledgements
-peer registry
-client/server wrappers
-backend interface
-TCP backend
-dispatcher
-transport engine
-
-Its job is simple:
-
-move sync messages between peers without owning sync business logic.
+> Its job is simple: move sync messages between peers without owning sync business logic.
