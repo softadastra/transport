@@ -108,7 +108,7 @@ namespace softadastra::transport::engine
     /**
      * @brief Move assignment.
      */
-    TransportEngine &operator=(TransportEngine &&) noexcept = default;
+    TransportEngine &operator=(TransportEngine &&) noexcept = delete;
 
     /**
      * @brief Starts the transport engine.
