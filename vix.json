@@ -1,11 +1,18 @@
 {
-  "name": "transport",
-  "namespace": "softadastra",
-  "version": "0.9.0",
-  "type": "library",
+  "authors": [
+    {
+      "github": "Gaspardkirira",
+      "name": "Gaspard Kirira"
+    }
+  ],
+  "deps": [
+    {
+      "id": "softadastra/sync",
+      "version": "0.7.1"
+    }
+  ],
+  "description": "Transport primitives for reliable Softadastra peer messaging and sync delivery.",
   "include": "include",
-  "license": "MIT",
-  "description": "Event-driven transport layer for moving Softadastra sync messages between peers.",
   "keywords": [
     "softadastra",
     "transport",
@@ -31,17 +38,10 @@
     "infrastructure",
     "library"
   ],
+  "license": "MIT",
+  "name": "transport",
+  "namespace": "softadastra",
   "repository": "https://github.com/softadastra/transport",
-  "authors": [
-    {
-      "name": "Gaspard Kirira",
-      "github": "Gaspardkirira"
-    }
-  ],
-  "deps": [
-    {
-      "id": "softadastra/sync",
-      "version": "0.6.1"
-    }
-  ]
+  "type": "library",
+  "version": "0.10.0"
 }

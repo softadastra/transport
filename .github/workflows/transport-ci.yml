@@ -1,0 +1,586 @@
+name: Transport CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - release/**
+    paths:
+      - ".github/workflows/transport-ci.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "include/**"
+      - "src/**"
+      - "platform/**"
+      - "tests/**"
+      - "examples/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "vix.json"
+      - "vix.lock"
+
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+      - release/**
+    paths:
+      - ".github/workflows/transport-ci.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "include/**"
+      - "src/**"
+      - "platform/**"
+      - "tests/**"
+      - "examples/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "vix.json"
+      - "vix.lock"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUILD_JOBS: 2
+  SOFTADASTRA_GIT_BRANCH: dev
+  VIX_GIT_BRANCH: dev
+
+jobs:
+  build:
+    name: Build Transport (${{ matrix.compiler }}, ${{ matrix.build_type }}, tests=${{ matrix.tests }}, examples=${{ matrix.examples }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - gcc
+          - clang
+        build_type:
+          - Debug
+          - Release
+        tests:
+          - ON
+          - OFF
+        examples:
+          - ON
+          - OFF
+
+    steps:
+      - name: Checkout transport repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            clang \
+            g++ \
+            pkg-config \
+            git \
+            ca-certificates \
+            libasio-dev
+
+      - name: Select compiler
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            echo "CC=clang" >> "$GITHUB_ENV"
+            echo "CXX=clang++" >> "$GITHUB_ENV"
+          else
+            echo "CC=gcc" >> "$GITHUB_ENV"
+            echo "CXX=g++" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fetch dependencies
+        run: |
+          set -euxo pipefail
+
+          rm -rf ../core ../fs ../wal ../store ../sync ../async
+
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/core.git ../core
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/fs.git ../fs
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/wal.git ../wal
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/store.git ../store
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/sync.git ../sync
+          git clone --depth 1 --branch "${VIX_GIT_BRANCH}" --recurse-submodules https://github.com/vixcpp/async.git ../async
+
+          git -C ../async submodule update --init --recursive --depth 1 || true
+
+      - name: Prepare Asio for async
+        run: |
+          set -euxo pipefail
+
+          mkdir -p ../async/third_party/asio
+          rm -rf ../async/third_party/asio/include
+          mkdir -p ../async/third_party/asio/include
+          cp -r /usr/include/asio* ../async/third_party/asio/include/ || true
+
+          test -f ../async/third_party/asio/include/asio.hpp
+
+      - name: Build and install async
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../async -B ../async/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DVIX_ASYNC_BUILD_TESTS=OFF \
+            -DVIX_ASYNC_BUILD_EXAMPLES=OFF \
+            -DVIX_ENABLE_SANITIZERS=OFF
+
+          cmake --build ../async/build -j"${BUILD_JOBS}"
+          cmake --install ../async/build
+
+      - name: Build and install core
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../core -B ../core/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_CORE_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../core/build -j"${BUILD_JOBS}"
+          cmake --install ../core/build
+
+      - name: Build and install fs
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../fs -B ../fs/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_FS_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_FS_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../fs/build -j"${BUILD_JOBS}"
+          cmake --install ../fs/build
+
+      - name: Build and install wal
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../wal -B ../wal/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_WAL_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_WAL_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../wal/build -j"${BUILD_JOBS}"
+          cmake --install ../wal/build
+
+      - name: Build and install store
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../store -B ../store/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_STORE_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_STORE_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../store/build -j"${BUILD_JOBS}"
+          cmake --install ../store/build
+
+      - name: Build and install sync
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../sync -B ../sync/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_SYNC_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_SYNC_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../sync/build -j"${BUILD_JOBS}"
+          cmake --install ../sync/build
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DSOFTADASTRA_TRANSPORT_BUILD_TESTS=${{ matrix.tests }} \
+            -DSOFTADASTRA_TRANSPORT_BUILD_EXAMPLES=${{ matrix.examples }} \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: |
+          cmake --build build -j"${BUILD_JOBS}"
+
+      - name: Run tests
+        if: matrix.tests == 'ON'
+        run: |
+          ctest --test-dir build --output-on-failure
+
+  install-check:
+    name: Install Package Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout transport repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            g++ \
+            pkg-config \
+            git \
+            ca-certificates \
+            libasio-dev
+
+      - name: Fetch dependencies
+        run: |
+          set -euxo pipefail
+
+          rm -rf ../core ../fs ../wal ../store ../sync ../async
+
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/core.git ../core
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/fs.git ../fs
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/wal.git ../wal
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/store.git ../store
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/sync.git ../sync
+          git clone --depth 1 --branch "${VIX_GIT_BRANCH}" --recurse-submodules https://github.com/vixcpp/async.git ../async
+
+          git -C ../async submodule update --init --recursive --depth 1 || true
+
+      - name: Prepare Asio for async
+        run: |
+          set -euxo pipefail
+
+          mkdir -p ../async/third_party/asio
+          rm -rf ../async/third_party/asio/include
+          mkdir -p ../async/third_party/asio/include
+          cp -r /usr/include/asio* ../async/third_party/asio/include/ || true
+
+          test -f ../async/third_party/asio/include/asio.hpp
+
+      - name: Build and install async
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../async -B ../async/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DVIX_ASYNC_BUILD_TESTS=OFF \
+            -DVIX_ASYNC_BUILD_EXAMPLES=OFF \
+            -DVIX_ENABLE_SANITIZERS=OFF
+
+          cmake --build ../async/build -j"${BUILD_JOBS}"
+          cmake --install ../async/build
+
+      - name: Build and install core
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../core -B ../core/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_CORE_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../core/build -j"${BUILD_JOBS}"
+          cmake --install ../core/build
+
+      - name: Build and install fs
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../fs -B ../fs/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_FS_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_FS_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../fs/build -j"${BUILD_JOBS}"
+          cmake --install ../fs/build
+
+      - name: Build and install wal
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../wal -B ../wal/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_WAL_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_WAL_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../wal/build -j"${BUILD_JOBS}"
+          cmake --install ../wal/build
+
+      - name: Build and install store
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../store -B ../store/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_STORE_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_STORE_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../store/build -j"${BUILD_JOBS}"
+          cmake --install ../store/build
+
+      - name: Build and install sync
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../sync -B ../sync/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_SYNC_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_SYNC_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+          cmake --build ../sync/build -j"${BUILD_JOBS}"
+          cmake --install ../sync/build
+
+      - name: Configure install build
+        run: |
+          cmake -S . -B build-install -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-install" \
+            -DSOFTADASTRA_TRANSPORT_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_TRANSPORT_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: |
+          cmake --build build-install -j"${BUILD_JOBS}"
+
+      - name: Install
+        run: |
+          cmake --install build-install
+
+      - name: Verify installed package files
+        run: |
+          set -euxo pipefail
+
+          test -d .ci-install/include/softadastra
+          test -f .ci-install/lib/cmake/softadastra_transport/softadastra_transportConfig.cmake
+          test -f .ci-install/lib/cmake/softadastra_transport/softadastra_transportConfigVersion.cmake
+          test -f .ci-install/lib/cmake/softadastra_transport/softadastraTransportTargets.cmake
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout transport repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            clang \
+            g++ \
+            clang-tidy \
+            cppcheck \
+            pkg-config \
+            git \
+            ca-certificates \
+            libasio-dev
+
+      - name: Fetch dependencies
+        run: |
+          set -euxo pipefail
+
+          rm -rf ../core ../fs ../wal ../store ../sync ../async
+
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/core.git ../core
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/fs.git ../fs
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/wal.git ../wal
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/store.git ../store
+          git clone --depth 1 --branch "${SOFTADASTRA_GIT_BRANCH}" https://github.com/softadastra/sync.git ../sync
+          git clone --depth 1 --branch "${VIX_GIT_BRANCH}" --recurse-submodules https://github.com/vixcpp/async.git ../async
+
+          git -C ../async submodule update --init --recursive --depth 1 || true
+
+      - name: Prepare Asio for async
+        run: |
+          set -euxo pipefail
+
+          mkdir -p ../async/third_party/asio
+          rm -rf ../async/third_party/asio/include
+          mkdir -p ../async/third_party/asio/include
+          cp -r /usr/include/asio* ../async/third_party/asio/include/ || true
+
+          test -f ../async/third_party/asio/include/asio.hpp
+
+      - name: Build and install async
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../async -B ../async/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DVIX_ASYNC_BUILD_TESTS=OFF \
+            -DVIX_ASYNC_BUILD_EXAMPLES=OFF \
+            -DVIX_ENABLE_SANITIZERS=OFF
+
+          cmake --build ../async/build -j"${BUILD_JOBS}"
+          cmake --install ../async/build
+
+      - name: Build and install core
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../core -B ../core/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_CORE_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=OFF
+
+          cmake --build ../core/build -j"${BUILD_JOBS}"
+          cmake --install ../core/build
+
+      - name: Build and install fs
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../fs -B ../fs/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_FS_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_FS_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=OFF
+
+          cmake --build ../fs/build -j"${BUILD_JOBS}"
+          cmake --install ../fs/build
+
+      - name: Build and install wal
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../wal -B ../wal/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_WAL_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_WAL_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=OFF
+
+          cmake --build ../wal/build -j"${BUILD_JOBS}"
+          cmake --install ../wal/build
+
+      - name: Build and install store
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../store -B ../store/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_STORE_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_STORE_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=OFF
+
+          cmake --build ../store/build -j"${BUILD_JOBS}"
+          cmake --install ../store/build
+
+      - name: Build and install sync
+        run: |
+          set -euxo pipefail
+
+          cmake -S ../sync -B ../sync/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/.ci-deps" \
+            -DSOFTADASTRA_SYNC_BUILD_TESTS=OFF \
+            -DSOFTADASTRA_SYNC_BUILD_EXAMPLES=OFF \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=OFF
+
+          cmake --build ../sync/build -j"${BUILD_JOBS}"
+          cmake --install ../sync/build
+
+      - name: Configure for analysis
+        run: |
+          cmake -S . -B build-analyze -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$PWD/.ci-deps" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DSOFTADASTRA_TRANSPORT_BUILD_TESTS=ON \
+            -DSOFTADASTRA_TRANSPORT_BUILD_EXAMPLES=ON \
+            -DSOFTADASTRA_WARNINGS_AS_ERRORS=OFF
+
+      - name: Run clang-tidy
+        run: |
+          set +e
+          find src platform tests examples -name '*.cpp' -print0 2>/dev/null \
+            | xargs -0 -r -n1 -P2 clang-tidy -p build-analyze
+          exit 0
+
+      - name: Run cppcheck
+        run: |
+          set +e
+          cppcheck \
+            --enable=all \
+            --std=c++20 \
+            --inconclusive \
+            --quiet \
+            --suppress=missingIncludeSystem \
+            include/ src/ platform/ tests/ examples/ 2>/dev/null
+          exit 0
+
+  summary:
+    name: Transport CI Summary
+    needs:
+      - build
+      - install-check
+      - static-analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print summary
+        run: |
+          echo "Softadastra transport CI completed."
+          echo "- gcc and clang builds"
+          echo "- Debug and Release builds"
+          echo "- tests ON and OFF builds"
+          echo "- examples ON and OFF builds"
+          echo "- core, fs, wal, store, sync, and async dependency install validation"
+          echo "- transport package install verification"
+          echo "- static analysis"
