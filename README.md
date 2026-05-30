@@ -8,7 +8,7 @@ It connects peers, sends transport messages, receives inbound messages, dispatch
 
 The core rule is:
 
-> *Transport moves bytes. Sync owns meaning.*
+> _Transport moves bytes. Sync owns meaning._
 
 ## Purpose
 
@@ -400,9 +400,14 @@ public:
 };
 ```
 
-## TCP Backend
+## TCP Backends
 
-`TcpTransportBackend` is the first Linux TCP backend:
+Softadastra Transport provides two TCP backends:
+
+- `AsyncTcpTransportBackend`: recommended event-driven backend powered by `vix::async`.
+- `TcpTransportBackend`: legacy blocking backend kept for compatibility and simple tests.
+
+New code should prefer `AsyncTcpTransportBackend`.
 
 ```cpp
 auto config = transport::core::TransportConfig::local(7000);
@@ -617,18 +622,18 @@ Used internally by `TcpTransportBackend`.
 
 ## Examples
 
-| Example | Description |
-|---------|-------------|
-| `basic_server.cpp` | Minimal server setup |
-| `basic_client.cpp` | Minimal client setup |
-| `message_codec.cpp` | Encoding and decoding |
-| `peer_registry.cpp` | Peer tracking |
-| `dispatcher_ping.cpp` | Ping/pong dispatch |
-| `sync_bridge.cpp` | Sync integration |
-| `full_sync_demo_server.cpp` | Full sync server |
-| `full_sync_demo_client.cpp` | Full sync client |
-| `drive_end_to_end_demo_server.cpp` | End-to-end server |
-| `drive_end_to_end_demo_client.cpp` | End-to-end client |
+| Example                            | Description           |
+| ---------------------------------- | --------------------- |
+| `basic_server.cpp`                 | Minimal server setup  |
+| `basic_client.cpp`                 | Minimal client setup  |
+| `message_codec.cpp`                | Encoding and decoding |
+| `peer_registry.cpp`                | Peer tracking         |
+| `dispatcher_ping.cpp`              | Ping/pong dispatch    |
+| `sync_bridge.cpp`                  | Sync integration      |
+| `full_sync_demo_server.cpp`        | Full sync server      |
+| `full_sync_demo_client.cpp`        | Full sync client      |
+| `drive_end_to_end_demo_server.cpp` | End-to-end server     |
+| `drive_end_to_end_demo_client.cpp` | End-to-end client     |
 
 Build examples:
 
@@ -663,11 +668,13 @@ For now, the TCP backend is simple and blocking. Recommended direction:
 ## Dependencies
 
 **Internal:**
+
 - `softadastra/core`
 - `softadastra/store`
 - `softadastra/sync`
 
 **External:**
+
 - C++20 standard library
 - Linux sockets (current TCP backend)
 
@@ -675,7 +682,10 @@ For now, the TCP backend is simple and blocking. Recommended direction:
 
 - [ ] Public `Transport.hpp` aggregator
 - [ ] Persistent peer metadata
-- [ ] Async TCP backend
+- [x] Async TCP backend
+- [ ] Production hardening for async TCP backend
+- [ ] Better peer identity handshake
+- [ ] Pong timeout / missed keepalive detection
 - [ ] TLS backend
 - [ ] WebSocket backend
 - [ ] HTTP transport adapter

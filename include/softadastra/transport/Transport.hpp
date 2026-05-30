@@ -18,6 +18,7 @@
 
 #include <softadastra/transport/ack/TransportAck.hpp>
 
+#include <softadastra/transport/backend/AsyncTcpTransportBackend.hpp>
 #include <softadastra/transport/backend/ITransportBackend.hpp>
 #include <softadastra/transport/backend/TcpTransportBackend.hpp>
 
@@ -27,6 +28,8 @@
 #include <softadastra/transport/core/TransportConfig.hpp>
 #include <softadastra/transport/core/TransportContext.hpp>
 #include <softadastra/transport/core/TransportEnvelope.hpp>
+#include <softadastra/transport/core/TransportEvent.hpp>
+#include <softadastra/transport/core/TransportEventQueue.hpp>
 #include <softadastra/transport/core/TransportMessage.hpp>
 
 #include <softadastra/transport/dispatcher/MessageDispatcher.hpp>
@@ -45,6 +48,7 @@
 #include <softadastra/transport/types/PeerState.hpp>
 #include <softadastra/transport/types/TransportStatus.hpp>
 
+#include <softadastra/transport/utils/AsyncRead.hpp>
 #include <softadastra/transport/utils/Frame.hpp>
 
 #endif // SOFTADASTRA_TRANSPORT_TRANSPORT_HPP

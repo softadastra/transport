@@ -1,11 +1,11 @@
 {
   "name": "transport",
   "namespace": "softadastra",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "type": "library",
   "include": "include",
   "license": "MIT",
-  "description": "Peer-to-peer transport layer for Softadastra. Handles message delivery, peer connections, sessions, routing, and protocol-level communication between nodes. Acts as the bridge between network transport and the sync engine.",
+  "description": "Event-driven transport layer for moving Softadastra sync messages between peers.",
   "keywords": [
     "softadastra",
     "transport",

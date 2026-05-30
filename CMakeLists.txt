@@ -35,6 +35,7 @@ if(NOT SOFTADASTRA_UMBRELLA_BUILD)
     endif()
 endif()
 
+# ---- softadastra::sync ----
 if(NOT TARGET softadastra::sync AND NOT TARGET softadastra_sync)
     find_package(softadastra_sync CONFIG QUIET)
     find_package(sync CONFIG QUIET)
@@ -52,6 +53,28 @@ if(SOFTADASTRA_TRANSPORT_SYNC_TARGET STREQUAL "")
         "softadastra sync target not found.\n"
         "Install dependencies with Vix:\n"
         "  vix add @softadastra/sync\n"
+        "  vix install"
+    )
+endif()
+
+# ---- vix::async ----
+if(NOT TARGET vix::async AND NOT TARGET vix_async)
+    find_package(async CONFIG QUIET)
+    find_package(vix_async CONFIG QUIET)
+endif()
+
+set(SOFTADASTRA_TRANSPORT_ASYNC_TARGET "")
+if(TARGET vix::async)
+    set(SOFTADASTRA_TRANSPORT_ASYNC_TARGET vix::async)
+elseif(TARGET vix_async)
+    set(SOFTADASTRA_TRANSPORT_ASYNC_TARGET vix_async)
+endif()
+
+if(SOFTADASTRA_TRANSPORT_ASYNC_TARGET STREQUAL "")
+    message(FATAL_ERROR
+        "vix async target not found.\n"
+        "Install dependencies with Vix:\n"
+        "  vix add @vix/async\n"
         "  vix install"
     )
 endif()
@@ -101,6 +124,7 @@ target_compile_features(softadastra_transport PUBLIC cxx_std_20)
 target_link_libraries(softadastra_transport
     PUBLIC
         ${SOFTADASTRA_TRANSPORT_SYNC_TARGET}
+        ${SOFTADASTRA_TRANSPORT_ASYNC_TARGET}
 )
 
 # ========================
@@ -224,6 +248,7 @@ endif()
 message(STATUS "------------------------------------------------------")
 message(STATUS "softadastra::transport configured (0.1.0)")
 message(STATUS "Sync target:     ${SOFTADASTRA_TRANSPORT_SYNC_TARGET}")
+message(STATUS "Async target:    ${SOFTADASTRA_TRANSPORT_ASYNC_TARGET}")
 message(STATUS "Include dir:     ${CMAKE_CURRENT_SOURCE_DIR}/include")
 message(STATUS "Build tests:     ${SOFTADASTRA_TRANSPORT_BUILD_TESTS}")
 message(STATUS "Build examples:  ${SOFTADASTRA_TRANSPORT_BUILD_EXAMPLES}")

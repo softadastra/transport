@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -30,23 +31,25 @@ static transport_core::TransportMessage make_message(
     const std::string &correlation,
     const std::string &payload)
 {
-  transport_core::TransportMessage message;
+  transport_core::TransportMessage message{};
   message.type = type;
   message.from_node_id = from;
   message.to_node_id = to;
   message.correlation_id = correlation;
   message.payload = make_payload(payload);
+
   return message;
 }
 
 static void test_encode_decode_message_roundtrip()
 {
-  const auto original = make_message(
-      transport_types::MessageType::SyncBatch,
-      "node-a",
-      "node-b",
-      "sync-1",
-      "payload-data");
+  const auto original =
+      make_message(
+          transport_types::MessageType::SyncBatch,
+          "node-a",
+          "node-b",
+          "sync-1",
+          "payload-data");
 
   const auto encoded =
       transport_encoding::MessageEncoder::encode_message(original);
@@ -66,7 +69,7 @@ static void test_encode_decode_message_roundtrip()
 
 static void test_encode_decode_message_with_empty_fields()
 {
-  transport_core::TransportMessage original;
+  transport_core::TransportMessage original{};
   original.type = transport_types::MessageType::Ping;
   original.from_node_id = "node-a";
 
@@ -86,12 +89,13 @@ static void test_encode_decode_message_with_empty_fields()
 
 static void test_make_frame_matches_encoded_message_size()
 {
-  const auto message = make_message(
-      transport_types::MessageType::Hello,
-      "node-a",
-      "node-b",
-      "corr-1",
-      "hello");
+  const auto message =
+      make_message(
+          transport_types::MessageType::Hello,
+          "node-a",
+          "node-b",
+          "corr-1",
+          "hello");
 
   const auto encoded_message =
       transport_encoding::MessageEncoder::encode_message(message);
@@ -99,19 +103,22 @@ static void test_make_frame_matches_encoded_message_size()
   const auto frame =
       transport_encoding::MessageEncoder::make_frame(message);
 
-  assert(frame.valid());
+  assert(frame.is_valid());
   assert(frame.payload_size == encoded_message.size());
   assert(frame.payload == encoded_message);
+  assert(frame.encoded_size() ==
+         transport_utils::Frame::header_size + encoded_message.size());
 }
 
 static void test_encode_decode_frame_roundtrip()
 {
-  const auto message = make_message(
-      transport_types::MessageType::Ack,
-      "node-b",
-      "node-a",
-      "sync-1",
-      "ack");
+  const auto message =
+      make_message(
+          transport_types::MessageType::Ack,
+          "node-b",
+          "node-a",
+          "sync-1",
+          "ack");
 
   const auto framed =
       transport_encoding::MessageEncoder::encode_frame(message);
@@ -122,10 +129,11 @@ static void test_encode_decode_frame_roundtrip()
       transport_encoding::MessageDecoder::decode_frame(framed);
 
   assert(decoded_frame.has_value());
-  assert(decoded_frame->valid());
+  assert(decoded_frame->is_valid());
 
   const auto decoded_message =
-      transport_encoding::MessageDecoder::decode_message(decoded_frame->payload);
+      transport_encoding::MessageDecoder::decode_message(
+          decoded_frame->payload);
 
   assert(decoded_message.has_value());
   assert(decoded_message->type == message.type);
@@ -137,12 +145,13 @@ static void test_encode_decode_frame_roundtrip()
 
 static void test_decode_framed_message_roundtrip()
 {
-  const auto message = make_message(
-      transport_types::MessageType::Pong,
-      "node-b",
-      "node-a",
-      "ping-1",
-      "");
+  const auto message =
+      make_message(
+          transport_types::MessageType::Pong,
+          "node-b",
+          "node-a",
+          "ping-1",
+          "");
 
   const auto framed =
       transport_encoding::MessageEncoder::encode_frame(message);
@@ -160,7 +169,7 @@ static void test_decode_framed_message_roundtrip()
 
 static void test_decode_message_rejects_empty_buffer()
 {
-  const std::vector<std::uint8_t> empty;
+  const std::vector<std::uint8_t> empty{};
 
   const auto decoded =
       transport_encoding::MessageDecoder::decode_message(empty);
@@ -170,7 +179,7 @@ static void test_decode_message_rejects_empty_buffer()
 
 static void test_decode_frame_rejects_empty_buffer()
 {
-  const std::vector<std::uint8_t> empty;
+  const std::vector<std::uint8_t> empty{};
 
   const auto decoded =
       transport_encoding::MessageDecoder::decode_frame(empty);
@@ -180,17 +189,19 @@ static void test_decode_frame_rejects_empty_buffer()
 
 static void test_decode_message_rejects_truncated_payload()
 {
-  const auto message = make_message(
-      transport_types::MessageType::Hello,
-      "node-a",
-      "node-b",
-      "corr-1",
-      "hello");
+  const auto message =
+      make_message(
+          transport_types::MessageType::Hello,
+          "node-a",
+          "node-b",
+          "corr-1",
+          "hello");
 
   auto encoded =
       transport_encoding::MessageEncoder::encode_message(message);
 
   assert(!encoded.empty());
+
   encoded.pop_back();
 
   const auto decoded =
@@ -201,19 +212,19 @@ static void test_decode_message_rejects_truncated_payload()
 
 static void test_decode_frame_rejects_invalid_size_prefix()
 {
-  const auto message = make_message(
-      transport_types::MessageType::SyncBatch,
-      "node-a",
-      "node-b",
-      "sync-1",
-      "data");
+  const auto message =
+      make_message(
+          transport_types::MessageType::SyncBatch,
+          "node-a",
+          "node-b",
+          "sync-1",
+          "data");
 
   auto framed =
       transport_encoding::MessageEncoder::encode_frame(message);
 
   assert(framed.size() >= sizeof(std::uint32_t));
 
-  // Corrupt the size prefix so it no longer matches actual payload size.
   framed[0] = 0xFF;
   framed[1] = 0xFF;
   framed[2] = 0xFF;
@@ -227,7 +238,7 @@ static void test_decode_frame_rejects_invalid_size_prefix()
 
 static void test_decode_message_rejects_unknown_type_with_empty_sender()
 {
-  std::vector<std::uint8_t> buffer;
+  std::vector<std::uint8_t> buffer{};
 
   const std::uint8_t raw_type = 0;
   const std::uint32_t zero = 0;
@@ -241,20 +252,38 @@ static void test_decode_message_rejects_unknown_type_with_empty_sender()
 
   std::size_t offset = 0;
 
-  std::memcpy(buffer.data() + offset, &raw_type, sizeof(raw_type));
+  std::memcpy(
+      buffer.data() + offset,
+      &raw_type,
+      sizeof(raw_type));
+
   offset += sizeof(raw_type);
 
-  std::memcpy(buffer.data() + offset, &zero, sizeof(zero));
+  std::memcpy(
+      buffer.data() + offset,
+      &zero,
+      sizeof(zero));
+
   offset += sizeof(zero);
 
-  std::memcpy(buffer.data() + offset, &zero, sizeof(zero));
+  std::memcpy(
+      buffer.data() + offset,
+      &zero,
+      sizeof(zero));
+
   offset += sizeof(zero);
 
-  std::memcpy(buffer.data() + offset, &zero, sizeof(zero));
+  std::memcpy(
+      buffer.data() + offset,
+      &zero,
+      sizeof(zero));
+
   offset += sizeof(zero);
 
-  std::memcpy(buffer.data() + offset, &zero, sizeof(zero));
-  offset += sizeof(zero);
+  std::memcpy(
+      buffer.data() + offset,
+      &zero,
+      sizeof(zero));
 
   const auto decoded =
       transport_encoding::MessageDecoder::decode_message(buffer);

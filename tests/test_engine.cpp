@@ -3,113 +3,80 @@
  */
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <string>
-#include <vector>
 
-#include <softadastra/store/core/Operation.hpp>
-#include <softadastra/store/core/StoreConfig.hpp>
-#include <softadastra/store/engine/StoreEngine.hpp>
-#include <softadastra/store/types/Key.hpp>
-#include <softadastra/store/types/OperationType.hpp>
-#include <softadastra/store/types/Value.hpp>
-#include <softadastra/sync/core/SyncConfig.hpp>
-#include <softadastra/sync/core/SyncContext.hpp>
-#include <softadastra/sync/engine/SyncEngine.hpp>
-#include <softadastra/transport/backend/TcpTransportBackend.hpp>
-#include <softadastra/transport/core/PeerInfo.hpp>
-#include <softadastra/transport/core/TransportConfig.hpp>
-#include <softadastra/transport/core/TransportContext.hpp>
-#include <softadastra/transport/engine/TransportEngine.hpp>
-#include <softadastra/transport/types/MessageType.hpp>
-#include <softadastra/transport/types/TransportStatus.hpp>
+#include <softadastra/store/Store.hpp>
+#include <softadastra/sync/Sync.hpp>
+#include <softadastra/transport/Transport.hpp>
 
 namespace store_core = softadastra::store::core;
 namespace store_engine = softadastra::store::engine;
 namespace store_types = softadastra::store::types;
+
 namespace sync_core = softadastra::sync::core;
 namespace sync_engine = softadastra::sync::engine;
+
 namespace transport_backend = softadastra::transport::backend;
 namespace transport_core = softadastra::transport::core;
 namespace transport_engine = softadastra::transport::engine;
 namespace transport_types = softadastra::transport::types;
 
-static store_types::Value make_value(const std::string &text)
+static store_core::Operation make_put(
+    const std::string &key,
+    const std::string &value)
 {
-  store_types::Value value;
-  value.data.assign(text.begin(), text.end());
-  return value;
+  return store_core::Operation::put(
+      store_types::Key{key},
+      store_types::Value::from_string(value));
 }
 
-static sync_core::SyncContext make_sync_context(store_engine::StoreEngine &store)
+static transport_core::PeerInfo make_peer(
+    const std::string &node_id,
+    const std::string &host,
+    std::uint16_t port)
 {
-  static sync_core::SyncConfig cfg;
-
-  cfg.node_id = "node-a";
-  cfg.batch_size = 10;
-  cfg.require_ack = true;
-  cfg.auto_queue = true;
-  cfg.ack_timeout_ms = 2000;
-  cfg.retry_interval_ms = 1000;
-  cfg.max_retries = 3;
-
-  sync_core::SyncContext ctx;
-  ctx.store = &store;
-  ctx.config = &cfg;
-  return ctx;
-}
-
-static transport_core::TransportContext make_transport_context(sync_engine::SyncEngine &sync,
-                                                               std::uint16_t port = 7001)
-{
-  static transport_core::TransportConfig cfg;
-
-  cfg.bind_host = "127.0.0.1";
-  cfg.bind_port = port;
-  cfg.max_frame_size = 1024 * 1024;
-  cfg.max_pending_messages = 128;
-  cfg.enable_keepalive = true;
-
-  transport_core::TransportContext ctx;
-  ctx.config = &cfg;
-  ctx.sync = &sync;
-  return ctx;
-}
-
-static store_core::Operation make_put(const std::string &key,
-                                      const std::string &value,
-                                      std::uint64_t timestamp)
-{
-  store_core::Operation op;
-  op.type = store_types::OperationType::Put;
-  op.key = store_types::Key{key};
-  op.value = make_value(value);
-  op.timestamp = timestamp;
-  return op;
-}
-
-static transport_core::PeerInfo make_peer(const std::string &node_id,
-                                          const std::string &host,
-                                          std::uint16_t port)
-{
-  transport_core::PeerInfo peer;
-  peer.node_id = node_id;
-  peer.host = host;
-  peer.port = port;
-  return peer;
+  return transport_core::PeerInfo{
+      node_id,
+      host,
+      port};
 }
 
 static void test_engine_starts_and_stops()
 {
-  store_core::StoreConfig store_cfg;
-  store_cfg.enable_wal = false;
+  const std::string wal_path = "test_engine_start_stop.wal";
+  std::filesystem::remove(wal_path);
 
-  store_engine::StoreEngine store(store_cfg);
-  auto sync_ctx = make_sync_context(store);
-  sync_engine::SyncEngine sync(sync_ctx);
+  store_engine::StoreEngine store{
+      store_core::StoreConfig::durable(wal_path)};
 
-  auto transport_ctx = make_transport_context(sync, 7101);
-  transport_backend::TcpTransportBackend backend(*transport_ctx.config);
-  transport_engine::TransportEngine engine(transport_ctx, backend);
+  auto sync_config =
+      sync_core::SyncConfig::durable("node-a");
+
+  sync_core::SyncContext sync_context{
+      store,
+      sync_config};
+
+  sync_engine::SyncEngine sync{
+      sync_context};
+
+  auto transport_config =
+      transport_core::TransportConfig::local(7101);
+
+  transport_config.enable_keepalive = false;
+
+  transport_core::TransportContext transport_context{
+      transport_config,
+      sync};
+
+  transport_backend::TcpTransportBackend backend{
+      transport_config};
+
+  transport_engine::TransportEngine engine{
+      transport_context,
+      backend};
 
   assert(engine.status() == transport_types::TransportStatus::Stopped);
   assert(!engine.running());
@@ -119,158 +86,348 @@ static void test_engine_starts_and_stops()
   assert(engine.running());
 
   engine.stop();
+
   assert(engine.status() == transport_types::TransportStatus::Stopped);
   assert(!engine.running());
+
+  std::filesystem::remove(wal_path);
 }
 
 static void test_connect_and_disconnect_peer()
 {
-  store_core::StoreConfig store_cfg;
-  store_cfg.enable_wal = false;
+  const std::string wal_path = "test_engine_connect_disconnect.wal";
+  std::filesystem::remove(wal_path);
 
-  store_engine::StoreEngine store(store_cfg);
-  auto sync_ctx = make_sync_context(store);
-  sync_engine::SyncEngine sync(sync_ctx);
+  store_engine::StoreEngine store{
+      store_core::StoreConfig::durable(wal_path)};
 
-  auto transport_ctx = make_transport_context(sync, 7102);
-  transport_backend::TcpTransportBackend backend(*transport_ctx.config);
-  transport_engine::TransportEngine engine(transport_ctx, backend);
+  auto sync_config =
+      sync_core::SyncConfig::durable("node-a");
+
+  sync_core::SyncContext sync_context{
+      store,
+      sync_config};
+
+  sync_engine::SyncEngine sync{
+      sync_context};
+
+  auto transport_config =
+      transport_core::TransportConfig::local(7102);
+
+  transport_config.enable_keepalive = false;
+
+  transport_core::TransportContext transport_context{
+      transport_config,
+      sync};
+
+  transport_backend::TcpTransportBackend backend{
+      transport_config};
+
+  transport_engine::TransportEngine engine{
+      transport_context,
+      backend};
 
   assert(engine.start());
 
-  const auto peer = make_peer("node-b", "127.0.0.1", 7202);
+  const auto peer =
+      make_peer(
+          "node-b",
+          "127.0.0.1",
+          7202);
 
-  const bool connected = engine.connect_peer(peer);
-  // Real TCP may fail if nothing listens there, so we only assert the engine remains healthy.
+  const bool connected =
+      engine.connect_peer(peer);
+
+  /*
+   * Real TCP may fail if nothing listens there.
+   * The important rule here is that the engine remains usable.
+   */
   if (connected)
   {
     assert(engine.peers().contains("node-b"));
   }
 
-  const bool disconnected = engine.disconnect_peer(peer);
+  const bool disconnected =
+      engine.disconnect_peer(peer);
+
   if (connected)
   {
     assert(disconnected || !engine.peers().contains("node-b"));
   }
 
   engine.stop();
+
+  std::filesystem::remove(wal_path);
 }
 
 static void test_send_sync_to_unknown_peer_fails()
 {
-  store_core::StoreConfig store_cfg;
-  store_cfg.enable_wal = false;
+  const std::string wal_path = "test_engine_send_unknown.wal";
+  std::filesystem::remove(wal_path);
 
-  store_engine::StoreEngine store(store_cfg);
-  auto sync_ctx = make_sync_context(store);
-  sync_engine::SyncEngine sync(sync_ctx);
+  store_engine::StoreEngine store{
+      store_core::StoreConfig::durable(wal_path)};
 
-  auto transport_ctx = make_transport_context(sync, 7103);
-  transport_backend::TcpTransportBackend backend(*transport_ctx.config);
-  transport_engine::TransportEngine engine(transport_ctx, backend);
+  auto sync_config =
+      sync_core::SyncConfig::durable("node-a");
+
+  sync_core::SyncContext sync_context{
+      store,
+      sync_config};
+
+  sync_engine::SyncEngine sync{
+      sync_context};
+
+  auto transport_config =
+      transport_core::TransportConfig::local(7103);
+
+  transport_config.enable_keepalive = false;
+
+  transport_core::TransportContext transport_context{
+      transport_config,
+      sync};
+
+  transport_backend::TcpTransportBackend backend{
+      transport_config};
+
+  transport_engine::TransportEngine engine{
+      transport_context,
+      backend};
 
   assert(engine.start());
 
-  sync.submit_local_operation(make_put("k1", "v1", 1000));
-  const auto batch = sync.next_batch();
+  const auto submitted =
+      sync.submit_local_operation(
+          make_put("k1", "v1"));
+
+  assert(submitted.is_ok());
+
+  const auto batch =
+      sync.next_batch();
+
   assert(batch.size() == 1);
 
-  const auto peer = make_peer("node-b", "127.0.0.1", 7203);
+  const auto peer =
+      make_peer(
+          "node-b",
+          "127.0.0.1",
+          7203);
 
-  const bool sent = engine.send_sync(peer, batch[0]);
+  const bool sent =
+      engine.send_sync(peer, batch.front());
+
   assert(!sent);
 
   engine.stop();
+
+  std::filesystem::remove(wal_path);
 }
 
 static void test_send_sync_batch_to_unknown_peer_returns_zero()
 {
-  store_core::StoreConfig store_cfg;
-  store_cfg.enable_wal = false;
+  const std::string wal_path = "test_engine_send_batch_unknown.wal";
+  std::filesystem::remove(wal_path);
 
-  store_engine::StoreEngine store(store_cfg);
-  auto sync_ctx = make_sync_context(store);
-  sync_engine::SyncEngine sync(sync_ctx);
+  store_engine::StoreEngine store{
+      store_core::StoreConfig::durable(wal_path)};
 
-  auto transport_ctx = make_transport_context(sync, 7104);
-  transport_backend::TcpTransportBackend backend(*transport_ctx.config);
-  transport_engine::TransportEngine engine(transport_ctx, backend);
+  auto sync_config =
+      sync_core::SyncConfig::durable("node-a");
+
+  sync_core::SyncContext sync_context{
+      store,
+      sync_config};
+
+  sync_engine::SyncEngine sync{
+      sync_context};
+
+  auto transport_config =
+      transport_core::TransportConfig::local(7104);
+
+  transport_config.enable_keepalive = false;
+
+  transport_core::TransportContext transport_context{
+      transport_config,
+      sync};
+
+  transport_backend::TcpTransportBackend backend{
+      transport_config};
+
+  transport_engine::TransportEngine engine{
+      transport_context,
+      backend};
 
   assert(engine.start());
 
-  sync.submit_local_operation(make_put("k1", "v1", 1000));
-  sync.submit_local_operation(make_put("k2", "v2", 2000));
+  const auto first =
+      sync.submit_local_operation(
+          make_put("k1", "v1"));
 
-  const auto batch = sync.next_batch();
+  const auto second =
+      sync.submit_local_operation(
+          make_put("k2", "v2"));
+
+  assert(first.is_ok());
+  assert(second.is_ok());
+
+  const auto batch =
+      sync.next_batch();
+
   assert(batch.size() == 2);
 
-  const auto peer = make_peer("node-b", "127.0.0.1", 7204);
+  const auto peer =
+      make_peer(
+          "node-b",
+          "127.0.0.1",
+          7204);
 
-  const std::size_t sent = engine.send_sync_batch(peer, batch);
+  const std::size_t sent =
+      engine.send_sync_batch(peer, batch);
+
   assert(sent == 0);
 
   engine.stop();
+
+  std::filesystem::remove(wal_path);
 }
 
 static void test_poll_without_messages_returns_false()
 {
-  store_core::StoreConfig store_cfg;
-  store_cfg.enable_wal = false;
+  const std::string wal_path = "test_engine_poll_empty.wal";
+  std::filesystem::remove(wal_path);
 
-  store_engine::StoreEngine store(store_cfg);
-  auto sync_ctx = make_sync_context(store);
-  sync_engine::SyncEngine sync(sync_ctx);
+  store_engine::StoreEngine store{
+      store_core::StoreConfig::durable(wal_path)};
 
-  auto transport_ctx = make_transport_context(sync, 7105);
-  transport_backend::TcpTransportBackend backend(*transport_ctx.config);
-  transport_engine::TransportEngine engine(transport_ctx, backend);
+  auto sync_config =
+      sync_core::SyncConfig::durable("node-a");
+
+  sync_core::SyncContext sync_context{
+      store,
+      sync_config};
+
+  sync_engine::SyncEngine sync{
+      sync_context};
+
+  auto transport_config =
+      transport_core::TransportConfig::local(7105);
+
+  transport_config.enable_keepalive = false;
+
+  transport_core::TransportContext transport_context{
+      transport_config,
+      sync};
+
+  transport_backend::TcpTransportBackend backend{
+      transport_config};
+
+  transport_engine::TransportEngine engine{
+      transport_context,
+      backend};
 
   assert(engine.start());
   assert(!engine.poll_once());
   assert(engine.poll_many(5) == 0U);
 
   engine.stop();
+
+  std::filesystem::remove(wal_path);
 }
 
 static void test_ping_unknown_peer_fails()
 {
-  store_core::StoreConfig store_cfg;
-  store_cfg.enable_wal = false;
+  const std::string wal_path = "test_engine_ping_unknown.wal";
+  std::filesystem::remove(wal_path);
 
-  store_engine::StoreEngine store(store_cfg);
-  auto sync_ctx = make_sync_context(store);
-  sync_engine::SyncEngine sync(sync_ctx);
+  store_engine::StoreEngine store{
+      store_core::StoreConfig::durable(wal_path)};
 
-  auto transport_ctx = make_transport_context(sync, 7106);
-  transport_backend::TcpTransportBackend backend(*transport_ctx.config);
-  transport_engine::TransportEngine engine(transport_ctx, backend);
+  auto sync_config =
+      sync_core::SyncConfig::durable("node-a");
+
+  sync_core::SyncContext sync_context{
+      store,
+      sync_config};
+
+  sync_engine::SyncEngine sync{
+      sync_context};
+
+  auto transport_config =
+      transport_core::TransportConfig::local(7106);
+
+  transport_config.enable_keepalive = false;
+
+  transport_core::TransportContext transport_context{
+      transport_config,
+      sync};
+
+  transport_backend::TcpTransportBackend backend{
+      transport_config};
+
+  transport_engine::TransportEngine engine{
+      transport_context,
+      backend};
 
   assert(engine.start());
 
-  const auto peer = make_peer("node-b", "127.0.0.1", 7206);
+  const auto peer =
+      make_peer(
+          "node-b",
+          "127.0.0.1",
+          7206);
+
   assert(!engine.ping_peer(peer));
 
   engine.stop();
+
+  std::filesystem::remove(wal_path);
 }
 
 static void test_context_and_status_are_exposed()
 {
-  store_core::StoreConfig store_cfg;
-  store_cfg.enable_wal = false;
+  const std::string wal_path = "test_engine_context_status.wal";
+  std::filesystem::remove(wal_path);
 
-  store_engine::StoreEngine store(store_cfg);
-  auto sync_ctx = make_sync_context(store);
-  sync_engine::SyncEngine sync(sync_ctx);
+  store_engine::StoreEngine store{
+      store_core::StoreConfig::durable(wal_path)};
 
-  auto transport_ctx = make_transport_context(sync, 7107);
-  transport_backend::TcpTransportBackend backend(*transport_ctx.config);
-  transport_engine::TransportEngine engine(transport_ctx, backend);
+  auto sync_config =
+      sync_core::SyncConfig::durable("node-a");
 
-  const auto &ctx_ref = engine.context();
-  assert(ctx_ref.valid());
-  assert(ctx_ref.config_ref().bind_port == 7107);
+  sync_core::SyncContext sync_context{
+      store,
+      sync_config};
+
+  sync_engine::SyncEngine sync{
+      sync_context};
+
+  auto transport_config =
+      transport_core::TransportConfig::local(7107);
+
+  transport_config.enable_keepalive = false;
+
+  transport_core::TransportContext transport_context{
+      transport_config,
+      sync};
+
+  transport_backend::TcpTransportBackend backend{
+      transport_config};
+
+  transport_engine::TransportEngine engine{
+      transport_context,
+      backend};
+
+  const auto &context_ref =
+      engine.context();
+
+  assert(context_ref.is_valid());
+  assert(context_ref.config_ptr() != nullptr);
+  assert(context_ref.config_ptr()->bind_port == 7107);
+  assert(context_ref.sync_ptr() != nullptr);
 
   assert(engine.status() == transport_types::TransportStatus::Stopped);
+
+  std::filesystem::remove(wal_path);
 }
 
 int main()

@@ -30,6 +30,7 @@
 #include <softadastra/transport/core/TransportConfig.hpp>
 #include <softadastra/transport/core/TransportContext.hpp>
 #include <softadastra/transport/core/TransportEnvelope.hpp>
+#include <softadastra/transport/core/TransportEvent.hpp>
 #include <softadastra/transport/core/TransportMessage.hpp>
 #include <softadastra/transport/dispatcher/MessageDispatcher.hpp>
 #include <softadastra/transport/peer/PeerRegistry.hpp>
@@ -152,9 +153,45 @@ namespace softadastra::transport::engine
       status_ = transport_types::TransportStatus::Stopping;
 
       server_.stop();
+
+      for (const auto &peer : registry_.peers())
+      {
+        registry_.mark_disconnected(peer.node_id);
+      }
+
       registry_.clear();
 
       status_ = transport_types::TransportStatus::Stopped;
+    }
+
+    /**
+     * @brief Shuts down the transport engine.
+     *
+     * This is an explicit alias around stop() for lifecycle clarity.
+     */
+    void shutdown()
+    {
+      stop();
+    }
+
+    /**
+     * @brief Processes shutdown events produced by an async backend.
+     *
+     * This is useful after calling backend.stop() when the backend emitted
+     * PeerDisconnected or BackendError events during shutdown.
+     *
+     * @tparam Backend Backend type exposing drain_events(max_events).
+     * @param backend Async backend.
+     * @param max_events Maximum events to process.
+     * @return Number of successfully processed events.
+     */
+    template <typename Backend>
+    std::size_t process_backend_shutdown_events(
+        Backend &backend,
+        std::size_t max_events)
+    {
+      return process_events(
+          backend.drain_events(max_events));
     }
 
     /**
@@ -332,36 +369,7 @@ namespace softadastra::transport::engine
         return false;
       }
 
-      update_registry_from_inbound(*inbound);
-
-      const auto result =
-          dispatcher_.dispatch(inbound->message);
-
-      if (result.is_err())
-      {
-        if (inbound->from_peer.is_valid())
-        {
-          registry_.mark_error(inbound->from_peer.node_id);
-        }
-
-        return false;
-      }
-
-      if (inbound->from_peer.is_valid())
-      {
-        registry_.touch(inbound->from_peer.node_id);
-      }
-
-      const auto &value = result.value();
-
-      if (value.produced_ack &&
-          value.reply.has_value() &&
-          inbound->from_peer.is_valid())
-      {
-        send_reply(inbound->from_peer, *value.reply);
-      }
-
-      return value.handled;
+      return handle_inbound_envelope(*inbound);
     }
 
     /**
@@ -385,6 +393,76 @@ namespace softadastra::transport::engine
       }
 
       return processed;
+    }
+
+    /**
+     * @brief Processes one transport event.
+     *
+     * This method is used by event-driven backends such as AsyncTcpTransportBackend.
+     * It keeps TransportEngine as the owner of peer registry updates and message
+     * dispatch decisions.
+     *
+     * @param event Transport event emitted by a backend.
+     * @return true if the event was handled successfully.
+     */
+    bool process_event(const transport_core::TransportEvent &event)
+    {
+      if (!is_running() || !event.is_valid())
+      {
+        return false;
+      }
+
+      switch (event.type)
+      {
+      case transport_core::TransportEventType::PeerConnected:
+        return handle_peer_connected_event(event);
+
+      case transport_core::TransportEventType::PeerDisconnected:
+        return handle_peer_disconnected_event(event);
+
+      case transport_core::TransportEventType::EnvelopeReceived:
+        if (!event.envelope.has_value())
+        {
+          return false;
+        }
+
+        return handle_inbound_envelope(*event.envelope);
+
+      case transport_core::TransportEventType::SendCompleted:
+        return handle_send_completed_event(event);
+
+      case transport_core::TransportEventType::SendFailed:
+        return handle_send_failed_event(event);
+
+      case transport_core::TransportEventType::BackendError:
+        return handle_backend_error_event(event);
+
+      case transport_core::TransportEventType::Unknown:
+      default:
+        return false;
+      }
+    }
+
+    /**
+     * @brief Processes multiple transport events.
+     *
+     * @param events Transport events emitted by a backend.
+     * @return Number of successfully handled events.
+     */
+    std::size_t process_events(
+        const std::vector<transport_core::TransportEvent> &events)
+    {
+      std::size_t handled = 0;
+
+      for (const auto &event : events)
+      {
+        if (process_event(event))
+        {
+          ++handled;
+        }
+      }
+
+      return handled;
     }
 
     /**
@@ -493,6 +571,171 @@ namespace softadastra::transport::engine
     }
 
   private:
+    /**
+     * @brief Handles an inbound transport envelope.
+     *
+     * This is shared by poll_once() and process_event().
+     *
+     * @param inbound Inbound envelope.
+     * @return true if the message was handled successfully.
+     */
+    bool handle_inbound_envelope(
+        const transport_core::TransportEnvelope &inbound)
+    {
+      if (!inbound.is_valid())
+      {
+        return false;
+      }
+
+      update_registry_from_inbound(inbound);
+
+      const auto result =
+          dispatcher_.dispatch(inbound.message);
+
+      if (result.is_err())
+      {
+        if (inbound.from_peer.is_valid())
+        {
+          registry_.mark_error(inbound.from_peer.node_id);
+        }
+
+        return false;
+      }
+
+      if (inbound.from_peer.is_valid())
+      {
+        registry_.touch(inbound.from_peer.node_id);
+      }
+
+      const auto &value = result.value();
+
+      if (value.reply.has_value() &&
+          inbound.from_peer.is_valid())
+      {
+        send_reply(inbound.from_peer, *value.reply);
+      }
+
+      return value.handled;
+    }
+
+    /**
+     * @brief Handles a peer connected event.
+     *
+     * @param event Transport event.
+     * @return true if handled.
+     */
+    bool handle_peer_connected_event(
+        const transport_core::TransportEvent &event)
+    {
+      if (!event.peer.has_value() ||
+          !event.peer->is_valid())
+      {
+        return false;
+      }
+
+      transport_peer::PeerSession session{*event.peer};
+      session.mark_connected();
+
+      registry_.upsert(std::move(session));
+
+      return true;
+    }
+
+    /**
+     * @brief Handles a peer disconnected event.
+     *
+     * @param event Transport event.
+     * @return true if handled.
+     */
+    bool handle_peer_disconnected_event(
+        const transport_core::TransportEvent &event)
+    {
+      if (!event.peer.has_value() ||
+          !event.peer->is_valid())
+      {
+        return false;
+      }
+
+      registry_.mark_disconnected(event.peer->node_id);
+      registry_.erase(event.peer->node_id);
+
+      return true;
+    }
+
+    /**
+     * @brief Handles a successful send event.
+     *
+     * @param event Transport event.
+     * @return true if handled.
+     */
+    bool handle_send_completed_event(
+        const transport_core::TransportEvent &event)
+    {
+      if (event.peer.has_value() &&
+          event.peer->is_valid())
+      {
+        registry_.touch(event.peer->node_id);
+        return true;
+      }
+
+      if (event.envelope.has_value() &&
+          event.envelope->to_peer.is_valid())
+      {
+        registry_.touch(event.envelope->to_peer.node_id);
+        return true;
+      }
+
+      return false;
+    }
+
+    /**
+     * @brief Handles a failed send event.
+     *
+     * @param event Transport event.
+     * @return true if handled.
+     */
+    bool handle_send_failed_event(
+        const transport_core::TransportEvent &event)
+    {
+      if (event.peer.has_value() &&
+          event.peer->is_valid())
+      {
+        registry_.mark_error(event.peer->node_id);
+        return true;
+      }
+
+      if (event.envelope.has_value() &&
+          event.envelope->to_peer.is_valid())
+      {
+        registry_.mark_error(event.envelope->to_peer.node_id);
+        return true;
+      }
+
+      return event.has_error() || event.has_message();
+    }
+
+    /**
+     * @brief Handles a backend error event.
+     *
+     * Backend errors are observable, but they do not always mean the whole engine
+     * must fail. If the event has a peer, only that peer is marked as faulted.
+     *
+     * @param event Transport event.
+     * @return true if handled.
+     */
+    bool handle_backend_error_event(
+        const transport_core::TransportEvent &event)
+    {
+      if (event.peer.has_value() &&
+          event.peer->is_valid())
+      {
+        registry_.mark_error(event.peer->node_id);
+        return true;
+      }
+
+      return event.has_error() || event.has_message();
+    }
+
     /**
      * @brief Builds a transport sync message from a sync envelope.
      */
