@@ -3,6 +3,7 @@
  */
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -25,6 +26,32 @@ namespace transport_core = softadastra::transport::core;
 namespace transport_dispatcher = softadastra::transport::dispatcher;
 namespace transport_types = softadastra::transport::types;
 
+namespace
+{
+  [[nodiscard]] std::filesystem::path make_test_dir(
+      const std::string &name)
+  {
+    const auto unique_id =
+        std::chrono::steady_clock::now()
+            .time_since_epoch()
+            .count();
+
+    auto dir =
+        std::filesystem::temp_directory_path() /
+        (name + "_" + std::to_string(unique_id));
+
+    std::filesystem::create_directories(dir);
+
+    return dir;
+  }
+
+  void cleanup_test_dir(const std::filesystem::path &dir)
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+  }
+}
+
 static store_types::Value make_value(const std::string &text)
 {
   return store_types::Value::from_string(text);
@@ -41,11 +68,11 @@ static store_core::Operation make_put_operation(
 
 static void test_dispatch_hello_is_handled()
 {
-  const std::string wal_path = "test_dispatcher_hello.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_dispatcher_hello");
+  const auto wal_path = test_dir / "test_dispatcher_hello.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -78,16 +105,16 @@ static void test_dispatch_hello_is_handled()
   assert(!result.value().produced_ack);
   assert(!result.value().reply.has_value());
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_dispatch_ping_produces_pong_reply()
 {
-  const std::string wal_path = "test_dispatcher_ping.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_dispatcher_ping");
+  const auto wal_path = test_dir / "test_dispatcher_ping.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -126,16 +153,16 @@ static void test_dispatch_ping_produces_pong_reply()
   assert(result.value().reply->to_node_id == "node-b");
   assert(result.value().reply->correlation_id == "ping-1");
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_dispatch_ack_calls_sync_receive_ack()
 {
-  const std::string wal_path = "test_dispatcher_ack.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_dispatcher_ack");
+  const auto wal_path = test_dir / "test_dispatcher_ack.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -198,16 +225,16 @@ static void test_dispatch_ack_calls_sync_receive_ack()
   assert(!result.value().reply.has_value());
   assert(!sync.ack_tracker().contains(sync_id));
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_dispatch_sync_batch_applies_remote_operation()
 {
-  const std::string wal_path = "test_dispatcher_sync_batch.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_dispatcher_sync_batch");
+  const auto wal_path = test_dir / "test_dispatcher_sync_batch.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -267,16 +294,16 @@ static void test_dispatch_sync_batch_applies_remote_operation()
 
   assert(entry.has_value());
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_dispatch_invalid_ack_payload_fails()
 {
-  const std::string wal_path = "test_dispatcher_invalid_ack.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_dispatcher_invalid_ack");
+  const auto wal_path = test_dir / "test_dispatcher_invalid_ack.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -308,16 +335,16 @@ static void test_dispatch_invalid_ack_payload_fails()
 
   assert(result.is_err());
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_dispatch_invalid_sync_batch_payload_fails()
 {
-  const std::string wal_path = "test_dispatcher_invalid_sync_batch.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_dispatcher_invalid_sync_batch");
+  const auto wal_path = test_dir / "test_dispatcher_invalid_sync_batch.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -350,7 +377,7 @@ static void test_dispatch_invalid_sync_batch_payload_fails()
 
   assert(result.is_err());
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 int main()

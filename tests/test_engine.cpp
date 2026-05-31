@@ -3,6 +3,7 @@
  */
 
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -23,6 +24,32 @@ namespace transport_backend = softadastra::transport::backend;
 namespace transport_core = softadastra::transport::core;
 namespace transport_engine = softadastra::transport::engine;
 namespace transport_types = softadastra::transport::types;
+
+namespace
+{
+  [[nodiscard]] std::filesystem::path make_test_dir(
+      const std::string &name)
+  {
+    const auto unique_id =
+        std::chrono::steady_clock::now()
+            .time_since_epoch()
+            .count();
+
+    auto dir =
+        std::filesystem::temp_directory_path() /
+        (name + "_" + std::to_string(unique_id));
+
+    std::filesystem::create_directories(dir);
+
+    return dir;
+  }
+
+  void cleanup_test_dir(const std::filesystem::path &dir)
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+  }
+}
 
 static store_core::Operation make_put(
     const std::string &key,
@@ -46,11 +73,11 @@ static transport_core::PeerInfo make_peer(
 
 static void test_engine_starts_and_stops()
 {
-  const std::string wal_path = "test_engine_start_stop.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_engine_start_stop");
+  const auto wal_path = test_dir / "test_engine_start_stop.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -90,16 +117,16 @@ static void test_engine_starts_and_stops()
   assert(engine.status() == transport_types::TransportStatus::Stopped);
   assert(!engine.running());
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_connect_and_disconnect_peer()
 {
-  const std::string wal_path = "test_engine_connect_disconnect.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_engine_connect_disconnect");
+  const auto wal_path = test_dir / "test_engine_connect_disconnect.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -157,16 +184,16 @@ static void test_connect_and_disconnect_peer()
 
   engine.stop();
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_send_sync_to_unknown_peer_fails()
 {
-  const std::string wal_path = "test_engine_send_unknown.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_engine_send_unknown");
+  const auto wal_path = test_dir / "test_engine_send_unknown.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -220,16 +247,16 @@ static void test_send_sync_to_unknown_peer_fails()
 
   engine.stop();
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_send_sync_batch_to_unknown_peer_returns_zero()
 {
-  const std::string wal_path = "test_engine_send_batch_unknown.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_engine_send_batch_unknown");
+  const auto wal_path = test_dir / "test_engine_send_batch_unknown.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -288,16 +315,16 @@ static void test_send_sync_batch_to_unknown_peer_returns_zero()
 
   engine.stop();
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_poll_without_messages_returns_false()
 {
-  const std::string wal_path = "test_engine_poll_empty.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_engine_poll_empty");
+  const auto wal_path = test_dir / "test_engine_poll_empty.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -331,16 +358,16 @@ static void test_poll_without_messages_returns_false()
 
   engine.stop();
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_ping_unknown_peer_fails()
 {
-  const std::string wal_path = "test_engine_ping_unknown.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_engine_ping_unknown");
+  const auto wal_path = test_dir / "test_engine_ping_unknown.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -380,16 +407,16 @@ static void test_ping_unknown_peer_fails()
 
   engine.stop();
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 static void test_context_and_status_are_exposed()
 {
-  const std::string wal_path = "test_engine_context_status.wal";
-  std::filesystem::remove(wal_path);
+  const auto test_dir = make_test_dir("softadastra_engine_context_status");
+  const auto wal_path = test_dir / "test_engine_context_status.wal";
 
   store_engine::StoreEngine store{
-      store_core::StoreConfig::durable(wal_path)};
+      store_core::StoreConfig::durable(wal_path.string())};
 
   auto sync_config =
       sync_core::SyncConfig::durable("node-a");
@@ -427,7 +454,7 @@ static void test_context_and_status_are_exposed()
 
   assert(engine.status() == transport_types::TransportStatus::Stopped);
 
-  std::filesystem::remove(wal_path);
+  cleanup_test_dir(test_dir);
 }
 
 int main()
