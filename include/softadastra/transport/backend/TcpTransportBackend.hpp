@@ -31,16 +31,26 @@
 #include <softadastra/transport/core/TransportMessage.hpp>
 #include <softadastra/transport/encoding/MessageDecoder.hpp>
 #include <softadastra/transport/encoding/MessageEncoder.hpp>
-#include <softadastra/transport/platform/linux/TcpSocket.hpp>
 #include <softadastra/transport/types/MessageType.hpp>
+
+#if defined(_WIN32)
+#include <softadastra/transport/platform/windows/TcpSocket.hpp>
+#else
+#include <softadastra/transport/platform/linux/TcpSocket.hpp>
+#endif
 
 namespace softadastra::transport::backend
 {
   namespace core = softadastra::transport::core;
   namespace encoding = softadastra::transport::encoding;
-  namespace platform = softadastra::transport::platform::os_linux;
   namespace types = softadastra::transport::types;
   namespace core_time = softadastra::core::time;
+
+#if defined(_WIN32)
+  namespace platform = softadastra::transport::platform::os_windows;
+#else
+  namespace platform = softadastra::transport::platform::os_linux;
+#endif
 
   /**
    * @brief Blocking TCP transport backend.

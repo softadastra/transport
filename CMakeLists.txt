@@ -131,6 +131,13 @@ target_link_libraries(softadastra_transport
         ${SOFTADASTRA_TRANSPORT_ASYNC_TARGET}
 )
 
+if(WIN32)
+    target_link_libraries(softadastra_transport
+        PUBLIC
+            Ws2_32
+    )
+endif()
+
 # ========================
 # Include directories
 # ========================
