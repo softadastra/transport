@@ -19,6 +19,8 @@
 #include <cstring>
 #include <limits>
 #include <span>
+#include <climits>
+#include <cstdint>
 #include <ws2tcpip.h>
 
 namespace softadastra::transport::platform::os_windows
@@ -51,12 +53,11 @@ namespace softadastra::transport::platform::os_windows
       }
 
       const auto max_value =
-          static_cast<core_time::Duration::rep>(
-              (std::numeric_limits<DWORD>::max)());
+          static_cast<core_time::Duration::rep>(UINT32_MAX);
 
       if (millis > max_value)
       {
-        return (std::numeric_limits<DWORD>::max)();
+        return UINT32_MAX;
       }
 
       return static_cast<DWORD>(millis);
@@ -65,7 +66,7 @@ namespace softadastra::transport::platform::os_windows
     [[nodiscard]] int chunk_size(std::size_t remaining) noexcept
     {
       const auto max_int =
-          static_cast<std::size_t>((std::numeric_limits<int>::max)());
+          static_cast<std::size_t>(INT_MAX);
 
       return static_cast<int>(std::min(remaining, max_int));
     }
