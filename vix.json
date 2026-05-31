@@ -8,7 +8,7 @@
   "deps": [
     {
       "id": "softadastra/sync",
-      "version": "0.8.0"
+      "version": "0.7.1"
     }
   ],
   "description": "Transport primitives for reliable Softadastra peer messaging and sync delivery.",
@@ -43,5 +43,5 @@
   "namespace": "softadastra",
   "repository": "https://github.com/softadastra/transport",
   "type": "library",
-  "version": "0.10.1"
+  "version": "0.11.0"
 }
